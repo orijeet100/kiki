@@ -492,3 +492,23 @@ def test_fr_0_11_listening_chime_is_soft_and_click_free():
     assert samples[0] == 0 and samples[-1] == 0  # starts and ends in silence
     assert 0.3 < len(samples) / voice.CHIME_RATE < 1.0  # short, with a ring-out
     assert np.abs(samples).max() < 0.4 * 32768  # well below full scale
+
+
+def test_fr_0_11_wake_scores_are_logged_and_the_fading_tail_is_not_a_near_miss():
+    from loguru import logger
+
+    scores = iter(
+        [0.0, 0.3, 0.0, 0.95, 0.4, 0.0]
+    )  # a near-miss, then a wake word and its tail
+    gate = voice.WakeGate(detect=lambda chunk: next(scores, 0.0))
+    lines = []
+    sink = logger.add(lambda message: lines.append(message.record["message"]))
+    try:
+        for _ in range(6):
+            gate._heard_wake_word(bytes(voice.WAKE_CHUNK_SAMPLES * 2))
+    finally:
+        logger.remove(sink)
+    assert lines == [
+        "Kiki: almost heard the wake word (score 0.30, needs 0.50)",
+        "Kiki: wake word heard (score 0.95)",
+    ]

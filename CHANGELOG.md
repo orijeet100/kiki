@@ -4,6 +4,9 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+- The terminal logs each wake word with its score, and near-misses (0.1 up to the threshold) with their best score, to tune `KIKI_WAKE_THRESHOLD` from real use. The fading tail of a heard wake word isn't counted as a miss.
+
 ### Removed
 - The chime when Kiki stops listening. Only the listening chime plays now (FR-0.11 updated).
 

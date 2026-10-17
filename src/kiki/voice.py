@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 from pipecat.audio.turn.base_turn_analyzer import BaseTurnAnalyzer, EndOfTurnState
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -43,6 +44,9 @@ from kiki.events import record_turn, set_state
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
 WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
+NEAR_MISS_SCORE = (
+    0.1  # wake scores between this and the threshold are logged as near-misses
+)
 WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
@@ -117,6 +121,7 @@ class WakeGate(FrameProcessor):
         self._detect = detect or hey_jarvis_detector()
         self._buffer = bytearray()
         self._last_wake = -WAKE_REFRACTORY_SECS
+        self._best_miss = 0.0  # highest score of the current near-miss, for the log
         self._listening = False
         self._heard_speech = False
         self._listening_since = 0.0
@@ -155,12 +160,28 @@ class WakeGate(FrameProcessor):
             chunk = np.frombuffer(bytes(self._buffer[:chunk_bytes]), dtype=np.int16)
             del self._buffer[:chunk_bytes]
             # ponytail: scored inline (~ms per chunk); move to an executor if the loop ever lags.
-            if self._detect(chunk) >= WAKE_THRESHOLD:
+            score = self._detect(chunk)
+            if score >= WAKE_THRESHOLD:
                 now = time.monotonic()
                 if now - self._last_wake > WAKE_REFRACTORY_SECS:
                     self._last_wake = now
                     heard = True
+                    logger.info(f"Kiki: wake word heard (score {score:.2f})")
+            self._log_near_miss(score)
         return heard
+
+    def _log_near_miss(self, score: float):
+        """Log attempts that scored some but not enough, to tune KIKI_WAKE_THRESHOLD."""
+        if time.monotonic() - self._last_wake < WAKE_REFRACTORY_SECS:
+            return  # the tail of a wake word that was heard, not a miss
+        if NEAR_MISS_SCORE <= score < WAKE_THRESHOLD:
+            self._best_miss = max(self._best_miss, score)
+        elif score < NEAR_MISS_SCORE and self._best_miss:
+            logger.info(
+                f"Kiki: almost heard the wake word (score {self._best_miss:.2f}, "
+                f"needs {WAKE_THRESHOLD:.2f})"
+            )
+            self._best_miss = 0.0
 
     async def _start_listening(self):
         if self._bot_speaking:
