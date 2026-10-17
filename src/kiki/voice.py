@@ -31,9 +31,10 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.workers.runner import WorkerRunner
 
-from kiki.agent import load_model, model_name, run_turn
+from kiki import tools, ui
+from kiki.agent import run_turn, warm_up
 from kiki.db import connect
-from kiki.events import append_turn
+from kiki.events import record_turn, set_state
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
@@ -140,10 +141,12 @@ class WakeGate(FrameProcessor):
         self._listening = True
         self._heard_speech = False
         self._listening_since = time.monotonic()
+        set_state("listening")
         await self._play(LISTENING_CHIME)
 
     async def _stop_listening(self):
         self._listening = False
+        set_state("thinking" if self._heard_speech else "idle")
         await self._play(DONE_CHIME)
 
     async def _play(self, pcm: bytes):
@@ -161,6 +164,7 @@ class Brain(FrameProcessor):
         self._model = model
         self._speech_ended = time.monotonic()
         self._waiting_for_speech: tuple[dict, float] | None = None
+        self._last_error = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -170,8 +174,12 @@ class Brain(FrameProcessor):
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
             await self._answer(frame.text.strip())
             return
-        elif isinstance(frame, BotStartedSpeakingFrame) and self._waiting_for_speech:
-            self._log_turn(time.monotonic())
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            set_state("speaking")
+            if self._waiting_for_speech:
+                self._log_turn(time.monotonic())
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            set_state("error" if self._last_error else "idle")
         await self.push_frame(frame, direction)
 
     async def _answer(self, text: str):
@@ -182,6 +190,7 @@ class Brain(FrameProcessor):
         stt_done = time.monotonic()
         turn = await asyncio.to_thread(run_turn, text, self._conn, self._model, "voice")
         turn["latency_ms"]["stt"] = round((stt_done - self._speech_ended) * 1000)
+        self._last_error = bool(turn["error"])
         self._waiting_for_speech = (turn, time.monotonic())
         await self.push_frame(TTSSpeakFrame(turn["said"]))
 
@@ -193,7 +202,7 @@ class Brain(FrameProcessor):
             turn["latency_ms"]["total"] = round(
                 (first_audio - self._speech_ended) * 1000
             )
-        append_turn(turn)
+        record_turn(turn, tools.read_list(self._conn)["items"])
 
 
 def processors(conn, model=None) -> list[FrameProcessor]:
@@ -231,16 +240,18 @@ async def run() -> None:
             audio_in_sample_rate=SAMPLE_RATE,
         )
     )
-    load_model(
-        model_name()
-    )  # pay the client start-up cost now, not on the first command
-    pipeline = Pipeline([transport.input(), *processors(connect()), transport.output()])
+    warm_up()
+    conn = connect()
+    server = ui.serve(conn)
+    pipeline = Pipeline([transport.input(), *processors(conn), transport.output()])
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE),
         idle_timeout_secs=None,  # always on: never shut down for being quiet
     )
-    print('Kiki v0.2. Say "hey jarvis", then a command. Ctrl+C to stop.')
+    print(
+        f'Kiki. Say "hey jarvis", then a command. UI: {ui.url(server)}  (Ctrl+C to stop)'
+    )
     runner = WorkerRunner(handle_sigint=sys.platform != "win32")
     await runner.add_workers(worker)
     await runner.run()

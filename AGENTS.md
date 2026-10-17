@@ -51,7 +51,8 @@ uv run pytest -m "not scenario"               # no API calls (voice tests take a
 uv run --env-file .env pytest                 # all tests, scenarios need ANTHROPIC_API_KEY in .env
 uvx ruff check . && uvx ruff format .         # lint and format
 uv run --env-file .env python -m kiki.cli     # terminal loop (v0.1)
-uv run --env-file .env python -m kiki.voice   # voice loop (v0.2): say "hey jarvis"
+uv run --env-file .env python -m kiki.voice   # voice loop + UI at http://127.0.0.1:8765
+uv run --env-file .env python -m kiki.ui      # UI only, with a text box (no microphone)
 uv run pytest -m "not voice and not scenario" # instant tests only
 uv run python -m kiki.latency                 # median voice latency from the turn log (NFR-0.3)
 ```

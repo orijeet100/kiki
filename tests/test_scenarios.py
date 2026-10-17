@@ -122,3 +122,23 @@ def test_scenario_12_fr_0_4_misheard_got_means_remove(conn):
     seed(conn, ("eggs", 1), ("rice", 1))
     agent.run_turn("Dot the eggs.", conn)
     assert state(conn) == {"rice": 1}
+
+
+def test_nfr_0_3_turns_on_new_threads_do_not_stall(conn):
+    """The UI and voice loop run turns on other threads; a client cached across threads used
+    to stall each turn until the request timeout (about 11 s)."""
+    import threading
+    import time
+
+    took = []
+
+    def one_turn():
+        start = time.perf_counter()
+        agent.run_turn("What's on my list?", conn)
+        took.append(time.perf_counter() - start)
+
+    for _ in range(3):
+        thread = threading.Thread(target=one_turn)
+        thread.start()
+        thread.join()
+    assert max(took) < 5, took

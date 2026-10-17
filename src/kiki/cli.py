@@ -2,14 +2,15 @@
 
 import json
 
-from kiki.agent import load_model, model_name, run_turn
+from kiki import tools
+from kiki.agent import run_turn, warm_up
 from kiki.db import connect
-from kiki.events import append_turn
+from kiki.events import record_turn
 
 
 def main() -> None:
     conn = connect()
-    load_model(model_name())  # client start-up cost before the first command
+    warm_up()
     print("Kiki v0.1. Type a command, or 'quit'.")
     while True:
         try:
@@ -21,7 +22,7 @@ def main() -> None:
         if command.lower() in {"quit", "exit"}:
             break
         turn = run_turn(command, conn)
-        append_turn(turn)
+        record_turn(turn, tools.read_list(conn)["items"])
         for call in turn["tool_calls"]:
             print(
                 f"  {call['name']}({json.dumps(call['args'])}) -> {json.dumps(call['result'])}"

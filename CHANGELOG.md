@@ -4,6 +4,26 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0] - 2026-10-17
+
+v0 is done: one household grocery list, edited and read back by voice on the laptop, with a local UI to watch it work. Steps v0.1 to v0.4 below. Still for the owner: a week of daily use to tune wake sensitivity and pauses (v0.3), and the real UI design in DESIGN.md (v0.4 shipped a first cut).
+
+## [v0.4] - 2026-10-17
+
+A local UI at http://127.0.0.1:8765: an orb that follows Kiki's state, the list, and every run.
+
+### Added
+- `ui.py` + `ui.html`: standard-library HTTP server with Server-Sent Events and one HTML page, no dependencies (ADR 0020). Started by `python -m kiki.voice`, or alone with `python -m kiki.ui` (text box, no microphone).
+- Live events: `state` (listening, thinking, speaking, idle, error) from the wake gate, the voice Brain and typed commands; `list` after every turn; `snapshot` with the last 50 runs on page load.
+- Safety: 127.0.0.1 only, Host check against DNS rebinding, JSON-only commands (no cross-site posts), 200-character limit.
+- First-cut design recorded in DESIGN.md, with the open questions.
+- Tests: UI server over real HTTP, event bus, gate state events, sentence-count guard, a real-API test that turns on new threads don't stall.
+
+### Fixed
+- Turns run on a new thread (UI, sometimes voice) stalled about 11 s: the v0.3 model client cache tied connections to the first thread's event loop. The client is now built per turn (~40 ms) after a start-up warm-up.
+- Replies longer than two sentences are sent back for a retry (FR-0.10).
+- Typed and spoken commands can't run at the same moment (process-wide turn lock).
+
 ## [v0.3] - 2026-10-17
 
 Tuned. Median end of speech to first audio went from about 3.0 s to about 1.5 s (NFR-0.3).

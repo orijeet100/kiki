@@ -16,8 +16,9 @@ v0.2 (voice: voice.py, a Pipecat pipeline around the same agent)
           (openWakeWord, (Silero)       (faster-whisper,      (run_turn) (Piper, local)
            local)                        local)
 
-v0.4 (UI)
-  events.py ──> local WebSocket ──> browser on localhost (orb, list, history)
+v0.4 (UI: ui.py, started by voice.py or on its own)
+  events.publish ──> ui.py (http.server, Server-Sent Events) ──> browser on 127.0.0.1:8765
+  browser text box ──> POST /command ──> run_turn (same path as voice)
 ```
 
 | Layer | Choice | ADR |
@@ -41,6 +42,8 @@ src/kiki/
   agent.py    one command in, one turn out: the Pydantic AI agent, its instructions, tools and guards
   events.py   appends turn events to the log
   cli.py      terminal loop (v0.1)
+  ui.py       local UI server (v0.4): page, live events, typed commands
+  ui.html     the whole UI: one file, no build step, no dependencies
   latency.py  median latency per stage from the turn log (v0.3)
   voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
 tests/
@@ -49,8 +52,8 @@ tests/
   test_agent.py       agent loop against Pydantic AI's FunctionModel / TestModel
   test_scenarios.py   ROADMAP scenarios against the real Claude API (marked `scenario`)
   test_latency.py     latency report
+  test_ui.py          UI server over real HTTP with a scripted model
   test_voice.py       wake gate with a fake detector; real models on Piper-synthesized speech (marked `voice`)
-web/                  UI (v0.4)
 ```
 
 `src/` layout is uv's default for a package (`uv init --lib`).
@@ -90,7 +93,9 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 **SQLite and threads:** Pydantic AI runs sync functions in worker threads and voice turns run in a thread too, so `db.connect` uses `check_same_thread=False`. Only one `update_list` runs per turn and turns are sequential, so the connection is never used concurrently.
 
-**Model client:** `load_model()` builds the client once per process (`functools.cache`); the voice loop and the terminal call it at startup. The first build costs about three seconds, which would otherwise land on the first command.
+**Model client:** built per turn with `infer_model`. `warm_up()` builds one at startup (voice, terminal, UI) to pay the one-time cost of about three seconds before the first command. A client must not be cached across turns: its connections belong to the event loop of the thread that first used it, and a turn on another thread (the UI and voice both use worker threads) then stalls until the request timeout. That cost 11 s per turn until v0.4.
+
+**One turn at a time:** `run_turn` holds a process-wide lock, so a typed command and a spoken one never use the SQLite connection at the same time.
 
 ## Voice loop (v0.2)
 
@@ -120,6 +125,24 @@ Measured on this laptop (v0.3, synthesized speech, CPU only):
 **Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
 
 Only the transcript text crosses the network (to the model API). Audio, the wake model, VAD, Whisper and Piper all run on the laptop (NFR-0.2).
+
+## UI (v0.4)
+
+`python -m kiki.voice` serves the UI at http://127.0.0.1:8765 next to the voice loop; `python -m kiki.ui` serves it alone (text box only, no microphone). Standard library only ([ADR 0020](docs/adr/0020-ui-over-server-sent-events.md)).
+
+| Route | What |
+|---|---|
+| `GET /` | `ui.html` |
+| `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
+| `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
+
+The page shows an orb whose look follows `state`, the list (rows that changed flash briefly), and run cards (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details). Dark and light follow the system setting; animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
+
+**Safety, since any web page in the browser could try to reach a local server:**
+- Binds to 127.0.0.1 only (NFR-0.6).
+- Rejects requests whose `Host` isn't `127.0.0.1` or `localhost` (blocks DNS rebinding).
+- `POST /command` requires `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
+- Commands are 1 to 200 characters.
 
 ## Matching names
 
@@ -179,11 +202,25 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 - `source` is `text` or `voice`. `stt` and `tts` latencies are `null` in v0.1. `llm` is the whole agent run (model requests plus tool time), so in v0.1 it equals `total`.
 - `error` is null, or a short string when the turn failed (for example, no internet).
 
-**`state`**, live only and not logged (v0.2 onward, consumed by the UI in v0.4):
+**`state`**, live only and not logged:
 
 ```json
-{"type": "state", "value": "idle | listening | thinking | speaking | muted | error"}
+{"type": "state", "value": "idle | listening | thinking | speaking | error"}
 ```
+
+| Value | Published by | When |
+|---|---|---|
+| `listening` | `WakeGate` | wake word heard |
+| `thinking` | `WakeGate`, `ui.send_command` | end of a command, before the agent answers |
+| `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word; reply finished |
+| `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
+| `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
+
+**`list`**, live only: the whole list after every turn, `{"type": "list", "items": [{"name", "quantity"}]}`.
+
+**`snapshot`**, sent once to each UI connection: `{"type": "snapshot", "state", "items", "turns"}` with the last 50 turns from the log.
+
+`events.publish` fans events out to in-process subscribers (one queue per open page). `events.record_turn` is what every caller runs after a turn: append to the log, publish the turn, publish the list.
 
 Adding a field is fine. Renaming or removing one needs an ADR.
 
@@ -206,6 +243,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_VAD_STOP_SECS` | `0.8` | Silence that ends a command |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
+| `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
 
 ## Dependencies
 
@@ -222,11 +260,12 @@ Approved. Anything else needs the owner's yes and an ADR.
 
 `piper-tts` is GPL-3.0. Fine for a personal assistant; if Kiki is ever distributed, switch to `PiperHttpTTSService` or Kokoro.
 
-UI dependencies are decided with the v0.4 design.
+The UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
 
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
+- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

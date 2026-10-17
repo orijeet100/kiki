@@ -1,6 +1,6 @@
-# Design (UI, v0.4)
+# Design (UI)
 
-> Owner to fill in. v0.4 starts only once this is written. Prompts below are a starting point; delete what you don't need.
+> Owner's document. v0.4 shipped a **first cut** so Kiki could be watched working; every choice below is open to change. Edit this file, then the UI follows it.
 
 ## What it's for
 
@@ -9,18 +9,30 @@ Watching Kiki work: what it heard, what it did, what it said, and how the list c
 ## Already decided
 
 - Runs in a browser on the laptop, localhost only (NFR-0.6).
-- Driven by Kiki's own `turn` and `state` events ([ARCHITECTURE.md](ARCHITECTURE.md#events)).
-- Three areas: an orb showing the assistant state, the grocery list, and a history of turns.
+- Driven by Kiki's own `state`, `turn` and `list` events ([ARCHITECTURE.md](ARCHITECTURE.md#events)).
+- Three areas: an orb showing the assistant state, the grocery list, and a history of runs.
 - Inspiration: the ElevenLabs UI orb.
 
-## To decide
+## v0.4 first cut (open to change)
 
-- **Layout:** sketch where the orb, list and history sit.
-- **Orb states:** how idle, listening, thinking, speaking, muted and error each look.
-- **Turn card:** what each history entry shows (heard, tool calls, reply, latency) and what is collapsed by default.
-- **List panel:** how a just-changed item is highlighted. Read-only or editable?
-- **History:** how many past turns load from the log when the page opens.
-- **Stack:** React + the ElevenLabs Orb component, or a single HTML file with a hand-made orb (new dependencies need an ADR).
+| Topic | First cut |
+|---|---|
+| Layout | Three panels side by side (assistant, list, runs); stacked on narrow screens |
+| Orb | CSS conic gradient (orange, yellow, pink). Idle: dim, slow breathing. Listening: bright glow, fast breathing. Thinking: fast spin, slightly smaller. Speaking: quick pulse with a pink glow. Error: red. No motion under "reduce motion" |
+| Turn card | Time and source (voice/text), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. Under Details: per-stage latency, model, raw tool calls |
+| List panel | Read-only. Rows that are new or changed flash yellow for 1.5 s. Count in the heading |
+| History | Last 50 runs from the log on load, newest first; live runs added on top |
+| Text box | Under the orb, so the UI works without a microphone |
+| Theme | Follows the system's light or dark setting |
+| Stack | One HTML file, no dependencies ([ADR 0020](docs/adr/0020-ui-over-server-sent-events.md)) |
+
+## Still open
+
+- **Audio-reactive orb:** the first cut doesn't follow voice volume. Needs volume events from the voice loop.
+- **The real ElevenLabs orb:** needs React, three.js and a build step (new ADR).
+- **Removed items:** they vanish from the list; the run card shows what was removed. A brief strike-through could show it in the list too.
+- **Editable list:** ticking items off on screen would be a second way to change state and needs its own tests.
+- **The M5 screen:** a much smaller layout for the fridge device.
 
 ## Sketches
 

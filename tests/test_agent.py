@@ -168,3 +168,13 @@ def test_nfr_0_4_turn_has_event_schema_fields(conn):
         "error",
     }
     assert turn["type"] == "turn" and turn["source"] == "text"
+
+
+def test_fr_0_10_more_than_two_sentences_is_sent_back_for_a_retry(conn):
+    model, seen = scripted(
+        reply("Bread is there. I removed eggs. The list has bread."),
+        reply("Removed eggs; bread was already there."),
+    )
+    turn = agent.run_turn("add bread and got the eggs", conn, model)
+    assert turn["said"] == "Removed eggs; bread was already there."
+    assert isinstance(seen[1][-1].parts[0], RetryPromptPart)

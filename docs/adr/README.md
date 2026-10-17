@@ -45,3 +45,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0017](0017-test-voice-with-synthesized-speech.md) | Test the voice loop with speech synthesized by Piper | Accepted |
 | [0018](0018-one-model-request-per-command.md) | One model request per command: the `update_list` output function | Accepted |
 | [0019](0019-whisper-base-with-vocabulary-prompt.md) | Whisper `base.en` with a grocery-vocabulary prompt | Accepted |
+| [0020](0020-ui-over-server-sent-events.md) | The UI is one HTML page over Server-Sent Events, standard library only | Accepted |

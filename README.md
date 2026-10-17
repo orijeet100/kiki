@@ -4,6 +4,29 @@ A voice assistant for the kitchen. Say the wake word, say a command ("add bread 
 
 It will live on the fridge as a small device (M5Stack CoreS3) that streams audio to a laptop at home, where all the real work happens. v0 runs entirely on the laptop.
 
+## Run it
+
+Needs Python 3.12, [uv](https://docs.astral.sh/uv/), a microphone and speakers. Put your key in `.env` (never committed):
+
+```bash
+echo ANTHROPIC_API_KEY=sk-ant-... > .env
+uv sync
+```
+
+Then one of:
+
+```bash
+uv run --env-file .env python -m kiki.voice
+```
+
+Say "hey jarvis", wait for the chime, say a command. The UI is at http://127.0.0.1:8765.
+
+```bash
+uv run --env-file .env python -m kiki.ui
+```
+
+The UI alone, with a text box. `python -m kiki.cli` is the plain terminal version. The first voice start downloads the Whisper and Piper models (a few hundred MB).
+
 ## Why
 
 We order groceries from home. The list is the first useful thing and the base for later rungs (cart building, ordering). It also exercises every hard part of a voice agent (parsing, persistent state, short replies, latency) with almost no external risk.
