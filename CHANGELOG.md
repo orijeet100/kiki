@@ -4,6 +4,9 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Removed
+- The chime when Kiki stops listening. Only the listening chime plays now (FR-0.11 updated).
+
 ### Changed
 - Softer chimes: the bare 16 kHz beeps are replaced by "glass" tones (sine plus gentle harmonics, click-free attack, natural ring-out, 48 kHz), picked by ear from three styles. Rising fifth when listening starts, falling pair when it stops.
 

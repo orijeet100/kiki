@@ -39,7 +39,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.8 | v0.1 | Garbled or ambiguous input replies "Sorry, I didn't catch that." and changes nothing. No clarifying questions. |
 | FR-0.9 | v0.1 | Every command is single-turn. Claude receives only the system prompt, the current list and the command. No previous turns. |
 | FR-0.10 | v0.1 | Replies are one or two short sentences, with no markdown, bullets or emojis, and numbers written as spoken ("two milks"). |
-| FR-0.11 | v0.2 | Saying "hey jarvis" starts listening. A chime plays when listening starts and a different chime when it stops. |
+| FR-0.11 | v0.2 | Saying "hey jarvis" starts listening, with a chime. No sound plays when listening stops (changed by the owner: the closing chime was unpleasant). |
 | FR-0.12 | v0.2 | Saying "hey jarvis" while Kiki is speaking stops the speech and starts a new command. |
 | FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [DESIGN.md](DESIGN.md). |
 | FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. The command ends when the sentence sounds finished, or after 3 seconds of silence. |

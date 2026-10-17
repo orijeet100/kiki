@@ -80,7 +80,7 @@ def test_fr_0_11_wake_word_opens_gate_with_chime():
     assert any(isinstance(f, InputAudioRawFrame) for f in down)
 
 
-def test_fr_0_11_end_of_speech_closes_gate_with_chime():
+def test_fr_0_11_end_of_speech_closes_gate_without_a_sound():
     gate = voice.WakeGate(detect=FakeDetector())
     frames = [
         *WAKE,
@@ -92,9 +92,9 @@ def test_fr_0_11_end_of_speech_closes_gate_with_chime():
         *silence(0.5),
     ]
     down, _ = asyncio.run(run_test(gate, frames_to_send=frames))
-    assert chimes(down) == [voice.LISTENING_CHIME, voice.DONE_CHIME]
+    assert chimes(down) == [voice.LISTENING_CHIME]  # nothing plays when listening stops
     done = next(
-        i for i, f in enumerate(down) if getattr(f, "audio", None) == voice.DONE_CHIME
+        i for i, f in enumerate(down) if isinstance(f, UserStoppedSpeakingFrame)
     )
     after_close = down[done:]
     assert not any(isinstance(f, InputAudioRawFrame) for f in after_close)
@@ -103,7 +103,8 @@ def test_fr_0_11_end_of_speech_closes_gate_with_chime():
 def test_fr_0_11_gate_closes_if_nothing_is_said(monkeypatch):
     monkeypatch.setattr(voice, "LISTEN_TIMEOUT_SECS", -1)
     down = downstream(WAKE + silence(0.2))
-    assert chimes(down) == [voice.LISTENING_CHIME, voice.DONE_CHIME]
+    assert chimes(down) == [voice.LISTENING_CHIME]
+    assert not any(isinstance(f, InputAudioRawFrame) for f in down[-5:])  # closed again
 
 
 def test_fr_0_12_wake_word_while_speaking_interrupts():
@@ -486,10 +487,8 @@ def test_fr_0_14_end_to_end_a_pause_mid_sentence_keeps_listening(
     assert "garlic" in heard[0].lower() and "onion" in heard[0].lower(), heard
 
 
-def test_fr_0_11_chimes_are_distinct_soft_and_click_free():
-    for pcm in (voice.LISTENING_CHIME, voice.DONE_CHIME):
-        samples = np.frombuffer(pcm, np.int16)
-        assert samples[0] == 0 and samples[-1] == 0  # starts and ends in silence
-        assert 0.3 < len(samples) / voice.CHIME_RATE < 1.0  # short, with a ring-out
-        assert np.abs(samples).max() < 0.4 * 32768  # well below full scale
-    assert voice.LISTENING_CHIME != voice.DONE_CHIME
+def test_fr_0_11_listening_chime_is_soft_and_click_free():
+    samples = np.frombuffer(voice.LISTENING_CHIME, np.int16)
+    assert samples[0] == 0 and samples[-1] == 0  # starts and ends in silence
+    assert 0.3 < len(samples) / voice.CHIME_RATE < 1.0  # short, with a ring-out
+    assert np.abs(samples).max() < 0.4 * 32768  # well below full scale

@@ -90,9 +90,9 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
     return (out * 32767).astype("<i2").tobytes()
 
 
-# Rising fifth (C6 to G6): "I'm listening". Falling (D6 to G5): "I stopped listening".
+# Rising fifth (C6 to G6): "I'm listening". There is no sound when listening stops: the
+# owner found the falling chime unpleasant, and the reply (or silence) already says it.
 LISTENING_CHIME = chime([(1046.5, 0.0, 1.0), (1568.0, 0.09, 0.85)])
-DONE_CHIME = chime([(1174.7, 0.0, 0.8), (784.0, 0.09, 0.9)])
 
 
 def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
@@ -174,7 +174,6 @@ class WakeGate(FrameProcessor):
     async def _stop_listening(self):
         self._listening = False
         set_state("thinking" if self._heard_speech else "idle")
-        await self._play(DONE_CHIME)
 
     async def _play(self, pcm: bytes):
         await self.push_frame(
