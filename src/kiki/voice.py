@@ -43,7 +43,9 @@ from kiki.events import record_turn, set_state
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
-WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
+# 0.4, not openWakeWord's usual 0.5: a real "hey jarvis" climbed past 0.46 and only crossed
+# 0.5 ~0.3 s later, delaying the chime. Background speech has scored at most 0.24 so far.
+WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.4"))
 NEAR_MISS_SCORE = (
     0.1  # wake scores between this and the threshold are logged as near-misses
 )

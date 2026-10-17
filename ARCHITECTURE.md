@@ -241,7 +241,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_MODEL` | `anthropic:claude-haiku-5-5` | Pydantic AI model string, `provider:model`. Swap with e.g. `openai:<model>`; `test` runs Pydantic AI's offline TestModel |
 | `KIKI_DB` | `kiki.db` | SQLite file path |
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
-| `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
+| `KIKI_WAKE_THRESHOLD` | `0.4` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |

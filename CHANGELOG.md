@@ -4,6 +4,9 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+- Wake threshold 0.4 instead of 0.5. With a real voice, "hey jarvis" scored 0.46 and only crossed 0.5 about 0.3 s later, so the chime came late. Background speech has scored at most 0.24 so far; the near-miss log shows if 0.4 lets false wakes through.
+
 ### Added
 - The terminal logs each wake word with its score, and near-misses (0.1 up to the threshold) with their best score, to tune `KIKI_WAKE_THRESHOLD` from real use. The fading tail of a heard wake word isn't counted as a miss.
 
