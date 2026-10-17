@@ -11,9 +11,10 @@ v0.1 (terminal)
                   └── reply ───┤
                                └──> events.py ──> logs/turns.jsonl
 
-v0.2 (voice, adds voice.py around the same agent)
-  mic ──> openWakeWord ──> VAD / turn detection ──> faster-whisper ──> agent.py ──> Piper ──> speaker
-          (local gate)     (Pipecat: Silero)        (local STT)        (as above)   (local TTS)
+v0.2 (voice: voice.py, a Pipecat pipeline around the same agent)
+  mic ──> WakeGate ──> VADProcessor ──> WhisperSTTService ──> Brain ──> PiperTTSService ──> speaker
+          (openWakeWord, (Silero)       (faster-whisper,      (run_turn) (Piper, local)
+           local)                        local)
 
 v0.4 (UI)
   events.py ──> local WebSocket ──> browser on localhost (orb, list, history)
@@ -24,10 +25,10 @@ v0.4 (UI)
 | Orchestration | Pipecat | [0002](docs/adr/0002-use-pipecat-for-voice-orchestration.md) |
 | Wake word | openWakeWord, built-in "hey jarvis", runs before STT | [0003](docs/adr/0003-gate-audio-with-local-wake-word.md) |
 | Audio in/out (v0.2) | Pipecat `LocalAudioTransport`, Python owns mic and speaker | [0011](docs/adr/0011-python-owns-the-mic-in-v0.md) |
-| STT | faster-whisper `small`, English | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
+| STT | faster-whisper `small.en` (English-only variant), int8 on CPU | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
 | Agent framework | Pydantic AI: tool loop, argument validation, retries, output guard, usage limit | [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
 | Brain | Any Pydantic AI model string, default `anthropic:claude-haiku-5-5` | [0005](docs/adr/0005-use-claude-haiku-by-default.md), [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
-| TTS | Piper (Kokoro if Piper sounds too robotic) | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
+| TTS | Piper, voice `en_US-lessac-medium` (Kokoro if Piper sounds too robotic) | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
 | State | SQLite, one file | [0006](docs/adr/0006-store-state-in-sqlite.md) |
 | Host | The laptop, permanently | [0007](docs/adr/0007-laptop-is-the-permanent-host.md) |
 
@@ -40,12 +41,13 @@ src/kiki/
   agent.py    one command in, one turn out: the Pydantic AI agent, its instructions, tools and guards
   events.py   appends turn events to the log
   cli.py      terminal loop (v0.1)
-  voice.py    Pipecat pipeline (v0.2)
+  voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
 tests/
   test_tools.py       tools.py against a temp SQLite file
   test_events.py      turn log format
   test_agent.py       agent loop against Pydantic AI's FunctionModel / TestModel
   test_scenarios.py   ROADMAP scenarios against the real Claude API (marked `scenario`)
+  test_voice.py       wake gate with a fake detector; real models on Piper-synthesized speech (marked `voice`)
 web/                  UI (v0.4)
 ```
 
@@ -83,6 +85,26 @@ web/                  UI (v0.4)
 Tools that ran before a failure stay in `tool_calls`, so the log still shows them (for example, a `clear_list` that ran before the connection dropped).
 
 **SQLite and threads:** Pydantic AI runs sync tools in worker threads, so `db.connect` uses `check_same_thread=False`. Calls within a turn are sequential.
+
+## Voice loop (v0.2)
+
+`python -m kiki.voice` runs `Pipeline([mic, *processors(conn), speaker])` on Pipecat's `LocalAudioTransport` at 16 kHz.
+
+| Processor | Job |
+|---|---|
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when VAD reports the end of speech (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `VADProcessor` | Silero VAD. Emits started/stopped-speaking frames; `stop_secs` (`KIKI_VAD_STOP_SECS`, default 0.8) is the silence that ends a command. |
+| `WhisperSTTService` | Transcribes each speech segment locally. |
+| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
+| `PiperTTSService` | Speaks the reply locally. |
+
+Chimes are 16 kHz sine tones generated in code: rising (660 → 990 Hz) when listening starts, falling when it stops (FR-0.11).
+
+**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3).
+
+**Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
+
+Only the transcript text crosses the network (to the model API). Audio, the wake model, VAD, Whisper and Piper all run on the laptop (NFR-0.2).
 
 ## Matching names
 
@@ -164,6 +186,11 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_MODEL` | `anthropic:claude-haiku-5-5` | Pydantic AI model string, `provider:model`. Swap with e.g. `openai:<model>`; `test` runs Pydantic AI's offline TestModel |
 | `KIKI_DB` | `kiki.db` | SQLite file path |
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
+| `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you |
+| `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
+| `KIKI_VAD_STOP_SECS` | `0.8` | Silence that ends a command |
+| `KIKI_WHISPER_MODEL` | `small.en` | faster-whisper model name |
+| `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 
 ## Dependencies
 
@@ -175,14 +202,15 @@ Approved. Anything else needs the owner's yes and an ADR.
 | `sqlite3` (stdlib) | State | v0.1 |
 | `pytest` (dev) | Tests | v0.1 |
 | `ruff` (via `uvx`, not installed) | Lint and format | v0.1 |
-| `pipecat-ai` and its extras for local audio, Silero, Whisper, Piper | Voice pipeline | v0.2 |
-| `openwakeword` | Wake word | v0.2 |
-| `faster-whisper` | STT | v0.2 |
-| Piper (or Kokoro) | TTS | v0.2 |
+| `pipecat-ai[local,silero,whisper,piper]` | Voice pipeline; pulls in PyAudio, faster-whisper and `piper-tts` | v0.2 |
+| `openwakeword` | Wake word (0.4.x: ONNX models bundled, works on Windows) | v0.2 |
+
+`piper-tts` is GPL-3.0. Fine for a personal assistant; if Kiki is ever distributed, switch to `PiperHttpTTSService` or Kokoro.
 
 UI dependencies are decided with the v0.4 design.
 
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
+- `test_voice.py`: the gate tests use a fake detector and are instant. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

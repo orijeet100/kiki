@@ -47,8 +47,10 @@ ADR 0009 ──referenced by──> commit "tools: ... (FR-0.2, ADR-0009)"
 
 ```bash
 uv sync                                       # install
-uv run pytest -m "not scenario"               # fast tests, no API calls
+uv run pytest -m "not scenario"               # no API calls (voice tests take about a minute)
 uv run --env-file .env pytest                 # all tests, scenarios need ANTHROPIC_API_KEY in .env
 uvx ruff check . && uvx ruff format .         # lint and format
 uv run --env-file .env python -m kiki.cli     # terminal loop (v0.1)
+uv run --env-file .env python -m kiki.voice   # voice loop (v0.2): say "hey jarvis"
+uv run pytest -m "not voice and not scenario" # instant tests only
 ```
