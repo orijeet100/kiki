@@ -23,6 +23,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.2 | **Done** (2026-10-17) | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
 | v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
 | v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [DESIGN.md](DESIGN.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
+| v0.5 | **Done** (2026-10-17) | **Natural pauses** (from daily use). A pause mid-sentence no longer ends the command; only one Kiki runs at a time. |
 
 ### Functional requirements
 
@@ -41,6 +42,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.11 | v0.2 | Saying "hey jarvis" starts listening. A chime plays when listening starts and a different chime when it stops. |
 | FR-0.12 | v0.2 | Saying "hey jarvis" while Kiki is speaking stops the speech and starts a new command. |
 | FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [DESIGN.md](DESIGN.md). |
+| FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. The command ends when the sentence sounds finished, or after 3 seconds of silence. |
+| FR-0.15 | v0.5 | Only one Kiki runs at a time. Starting a second one exits with "Kiki is already running". |
 
 ### Non-functional requirements
 
@@ -76,6 +79,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.2:** scenarios 1, 2, 5, 6, 8, 10 and 11 work by voice with "hey jarvis". FR-0.11, FR-0.12, NFR-0.1 and NFR-0.2 verified.
 - **v0.3:** NFR-0.3 met. False wakes and premature cut-offs are rare enough for a week of daily use.
 - **v0.4:** FR-0.13 and NFR-0.6 met.
+- **v0.5:** FR-0.14 and FR-0.15 met; a command with a 1.2 s mid-sentence pause is heard as one command by voice.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0

@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import sqlite3
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -113,11 +114,28 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    # On Windows, SO_REUSEADDR lets a second process bind a port that's already in use, so
+    # two copies of Kiki would both run (and both answer every command). Without it, the
+    # second copy fails to start. Elsewhere it only allows a quick restart after Ctrl+C.
+    allow_reuse_address = sys.platform != "win32"
+
+
+class AlreadyRunning(Exception):
+    pass
+
+
 def serve(
     conn: sqlite3.Connection, port: int = PORT, model=None
 ) -> ThreadingHTTPServer:
-    """Start the UI server in a background thread and return it."""
-    server = ThreadingHTTPServer((HOST, port), make_handler(conn, model))
+    """Start the UI server in a background thread and return it.
+
+    Raises AlreadyRunning if the port is taken, which means another Kiki is running.
+    """
+    try:
+        server = _Server((HOST, port), make_handler(conn, model))
+    except OSError as e:
+        raise AlreadyRunning(f"Kiki is already running (port {port} is in use).") from e
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -129,8 +147,11 @@ def url(server: ThreadingHTTPServer) -> str:
 
 def main() -> None:
     conn = connect()
+    try:
+        server = serve(conn)
+    except AlreadyRunning as e:
+        sys.exit(str(e))
     warm_up()
-    server = serve(conn)
     print(f"Kiki UI: {url(server)}  (Ctrl+C to stop)")
     try:
         threading.Event().wait()

@@ -41,8 +41,9 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0013](0013-tooling-uv-pytest-ruff.md) | Tooling: uv, pytest, ruff | Accepted |
 | [0014](0014-reject-list-export-to-phone.md) | Don't export or sync the list to phones | Rejected |
 | [0015](0015-use-pydantic-ai-for-the-agent.md) | Use Pydantic AI for the agent | Accepted |
-| [0016](0016-one-utterance-per-wake-word.md) | The wake gate lets through one utterance per wake word | Accepted |
+| [0016](0016-one-utterance-per-wake-word.md) | The wake gate lets through one utterance per wake word | Accepted; end detection superseded by 0021 |
 | [0017](0017-test-voice-with-synthesized-speech.md) | Test the voice loop with speech synthesized by Piper | Accepted |
 | [0018](0018-one-model-request-per-command.md) | One model request per command: the `update_list` output function | Accepted |
 | [0019](0019-whisper-base-with-vocabulary-prompt.md) | Whisper `base.en` with a grocery-vocabulary prompt | Accepted |
 | [0020](0020-ui-over-server-sent-events.md) | The UI is one HTML page over Server-Sent Events, standard library only | Accepted |
+| [0021](0021-smart-turn-ends-the-command.md) | Smart Turn decides when a spoken command is finished | Accepted |
