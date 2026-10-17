@@ -1,0 +1,54 @@
+# AGENTS.md
+
+Rules for anyone writing code in this repo, human or coding agent. More detail will be added by the owner.
+
+## Before you start
+
+Read in this order: [README.md](README.md), the active version in [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md). Check [docs/adr/](docs/adr/README.md) before changing anything a decision covers.
+
+## Rules
+
+1. **Work only on the active build step** in ROADMAP.md. Don't scaffold future steps or ideas.
+2. **Docs move with code.** A change to behavior updates ARCHITECTURE.md in the same commit. A new decision gets a new ADR. Never edit an accepted ADR's content; write a new one that supersedes it, and change only the old one's status line.
+3. **Requirements and tests are 1:1.** Every FR/NFR has a test named after its ID. No requirement without a test, no test without a requirement.
+4. **No new dependency without the owner's yes.** The approved list is in ARCHITECTURE.md. Adding one means an ADR and updating that list.
+5. **Tools are plain functions.** JSON-compatible input and output, no knowledge of voice, Pipecat or Claude inside `tools.py`.
+6. **Secrets only from env vars.** Model name and API key come from the environment. Never commit `.env`, a key, `kiki.db` or `logs/`.
+7. **Shipping a step:** its definition of done passes, add a CHANGELOG entry, tag it (`v0.1`, `v0.2`...).
+8. **Keep it single-turn** in v0 ([ADR 0009](docs/adr/0009-single-turn-commands.md)). Don't pass previous turns to Claude.
+
+## Naming conventions
+
+| Thing | Convention | Example |
+|---|---|---|
+| Requirements | `FR-<ver>.<n>`, `NFR-<ver>.<n>` | `FR-0.2`, `NFR-0.1` |
+| Tests | `test_<req id>_<what>` | `test_fr_0_2_duplicate_add` |
+| ADRs | `docs/adr/NNNN-kebab-title.md`, title states the decision | `0003-gate-audio-with-local-wake-word.md` |
+| Versions and tags | `v0.1`, `v0.2`, `v1` | |
+| Python | PEP 8: `snake_case` functions and files, `PascalCase` classes | `add_items()` |
+| Env vars | `KIKI_` prefix (except `ANTHROPIC_API_KEY`) | `KIKI_MODEL` |
+| Commits | `<area>: <what>` plus IDs when relevant | `tools: add_items keeps existing quantity (FR-0.2)` |
+
+## How things tie together
+
+```
+FR-0.2 ──tested by──> test_fr_0_2_duplicate_add
+  │                          │
+decided in               changed in
+  ▼                          ▼
+ADR 0009 ──referenced by──> commit "tools: ... (FR-0.2, ADR-0009)"
+                             │
+                        shipped in
+                             ▼
+                      CHANGELOG v0.1 ──> git tag v0.1
+```
+
+## Commands
+
+```bash
+uv sync                               # install
+uv run pytest -m "not scenario"       # fast tests, no API calls
+uv run pytest                         # all tests, needs ANTHROPIC_API_KEY
+uvx ruff check . && uvx ruff format . # lint and format
+uv run python -m kiki.cli             # terminal loop (v0.1)
+```
