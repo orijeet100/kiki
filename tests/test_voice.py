@@ -19,6 +19,7 @@ from pipecat.frames.frames import (
     InputAudioRawFrame,
     InterruptionFrame,
     OutputAudioRawFrame,
+    StartFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStoppedFrame,
@@ -670,3 +671,71 @@ def test_fr_0_16_end_to_end_follow_up_without_the_wake_word(
     assert (
         len(turns) == 2 and "chicken" in (turns[1]["previous_command"] or "").lower()
     ), turns
+
+
+class Passthrough(FrameProcessor):
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+
+
+class FakeMic(Passthrough):
+    """Sends 20 ms of silence every 20 ms, then stops: a mic stream that died."""
+
+    def __init__(self, stop_after_secs):
+        super().__init__()
+        self._stop_after_secs = stop_after_secs
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, StartFrame):
+            self.create_task(self._stream())
+
+    async def _stream(self):
+        import time
+
+        end = time.monotonic() + self._stop_after_secs
+        while time.monotonic() < end:
+            await self.push_frame(
+                InputAudioRawFrame(audio=bytes(640), sample_rate=16000, num_channels=1)
+            )
+            await asyncio.sleep(0.02)
+
+
+def test_nfr_0_7_mic_watchdog_ends_the_pipeline_when_the_mic_stops(
+    tmp_path, monkeypatch
+):
+    """Seen in daily use: the mic stopped delivering and Kiki froze on "listening"."""
+    import time
+    from types import SimpleNamespace
+
+    import pipecat.transports.local.audio as local_audio
+
+    opened = []
+
+    class FakeTransport:
+        def __init__(self, params):
+            self._pyaudio = SimpleNamespace(terminate=lambda: opened.append("closed"))
+
+        def input(self):
+            return FakeMic(stop_after_secs=0.5)
+
+        def output(self):
+            return Passthrough()
+
+    monkeypatch.setattr(local_audio, "LocalAudioTransport", FakeTransport)
+    monkeypatch.setattr(voice, "MIC_SILENT_SECS", 1.0)
+    monkeypatch.setattr(
+        voice,
+        "processors",
+        lambda conn, model=None: [voice.WakeGate(detect=lambda c: 0.0)],
+    )
+
+    start = time.monotonic()
+    asyncio.run(
+        asyncio.wait_for(voice.run_until_mic_stops(connect(str(tmp_path / "w.db"))), 20)
+    )
+    took = time.monotonic() - start
+    assert took >= 1.4  # not while audio flowed (0.5 s), plus the 1 s allowance
+    assert took < 15  # it returned, so run() can rebuild the pipeline
+    assert opened == ["closed"]  # the dead mic stream was released

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 from pipecat.audio.turn.base_turn_analyzer import BaseTurnAnalyzer, EndOfTurnState
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -49,6 +50,9 @@ LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 FOLLOW_UP_SECS = float(os.environ.get("KIKI_FOLLOW_UP_SECS", "5"))
 # The end of Kiki's own reply can still be in the room when playback ends; ignore it.
 ECHO_GUARD_SECS = 0.3
+# The mic sends a frame every 20 ms, even in silence. None for this long means the input
+# stopped (seen once in daily use: Kiki froze showing "listening"); rebuild the pipeline.
+MIC_SILENT_SECS = 3.0
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
 # Smart Turn is trained to judge at 0.2 s; at 0.5 s it called "Can you add one..." finished.
 PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
@@ -113,11 +117,13 @@ class WakeGate(FrameProcessor):
         self._opens_at = 0.0
         self._gives_up_at = 0.0  # close if nobody has spoken by then
         self._bot_speaking = False
+        self.last_audio_at = time.monotonic()  # read by the mic watchdog in run()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, InputAudioRawFrame):
+            self.last_audio_at = time.monotonic()
             if self._heard_wake_word(frame.audio):
                 await self._start_listening(LISTEN_TIMEOUT_SECS, follow_up=False)
             now = time.monotonic()
@@ -167,6 +173,7 @@ class WakeGate(FrameProcessor):
         self._opens_at = now + delay
         self._gives_up_at = now + delay + timeout
         set_state("listening")
+        logger.info(f"Kiki: listening ({'follow-up' if follow_up else 'wake word'})")
         if (
             not follow_up
         ):  # a chime after every reply would get old fast; the orb shows it
@@ -175,6 +182,9 @@ class WakeGate(FrameProcessor):
     async def _stop_listening(self):
         self._listening = False
         set_state("thinking" if self._heard_speech else "idle")
+        logger.info(
+            f"Kiki: stopped listening ({'command heard' if self._heard_speech else 'nothing said'})"
+        )
         if (
             self._heard_speech or not self._follow_up
         ):  # an unused follow-up ends silently
@@ -345,17 +355,28 @@ def processors(conn, model=None) -> list[FrameProcessor]:
 
 
 async def run() -> None:
-    from pipecat.transports.local.audio import (
-        LocalAudioTransport,
-        LocalAudioTransportParams,
-    )
-
     conn = connect()
     try:
         server = ui.serve(conn)  # first: fails fast if Kiki is already running
     except ui.AlreadyRunning as e:
         sys.exit(str(e))
     warm_up()
+    print(
+        f'Kiki. Say "hey jarvis", then a command. UI: {ui.url(server)}  (Ctrl+C to stop)'
+    )
+    while True:
+        await run_until_mic_stops(conn)
+        set_state("idle")
+        logger.warning("Kiki: restarting the voice pipeline")
+
+
+async def run_until_mic_stops(conn) -> None:
+    """Run the voice pipeline until the mic watchdog trips (MIC_SILENT_SECS without audio)."""
+    from pipecat.transports.local.audio import (
+        LocalAudioTransport,
+        LocalAudioTransportParams,
+    )
+
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
@@ -363,18 +384,31 @@ async def run() -> None:
             audio_in_sample_rate=SAMPLE_RATE,
         )
     )
-    pipeline = Pipeline([transport.input(), *processors(conn), transport.output()])
+    chain = processors(conn)
+    gate = chain[0]
     worker = PipelineWorker(
-        pipeline,
+        Pipeline([transport.input(), *chain, transport.output()]),
         params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE),
         idle_timeout_secs=None,  # always on: never shut down for being quiet
     )
-    print(
-        f'Kiki. Say "hey jarvis", then a command. UI: {ui.url(server)}  (Ctrl+C to stop)'
-    )
     runner = WorkerRunner(handle_sigint=sys.platform != "win32")
     await runner.add_workers(worker)
-    await runner.run()
+    running = asyncio.create_task(runner.run())
+    while not running.done():
+        await asyncio.sleep(1)
+        silent_for = time.monotonic() - gate.last_audio_at
+        if silent_for > MIC_SILENT_SECS:
+            logger.error(f"Kiki: no audio from the microphone for {silent_for:.0f} s")
+            break
+    else:
+        return await running  # the pipeline ended by itself (Ctrl+C): stop for good
+    # A stuck pipeline may not finish cancelling; give it a moment, then move on regardless.
+    try:
+        await asyncio.wait_for(worker.cancel(reason="mic stopped"), timeout=5)
+        await asyncio.wait_for(running, timeout=5)
+    except (TimeoutError, asyncio.CancelledError):
+        running.cancel()
+    transport._pyaudio.terminate()  # release the old mic stream before opening a new one
 
 
 def main() -> None:
