@@ -7,6 +7,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "openwakeword>=0.4.0",
+    "pipecat-ai[local,piper,silero,whisper]>=1.12.0",
     "pydantic-ai-slim[anthropic]>=2.57.0",
 ]
 
@@ -20,4 +22,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-markers = ["scenario: calls the real Claude API (needs ANTHROPIC_API_KEY, costs a little)"]
+markers = [
+    "scenario: calls the real Claude API (needs ANTHROPIC_API_KEY, costs a little)",
+    "voice: runs the real wake word, VAD and Whisper models on synthesized speech (slow)",
+]

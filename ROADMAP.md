@@ -20,8 +20,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | Step | Status | What |
 |---|---|---|
 | v0.1 | **Done** (2026-10-17) | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
-| v0.2 | Next | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
-| v0.3 | Planned | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
+| v0.2 | **Done** (2026-10-17) | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
+| v0.3 | Next | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
 | v0.4 | Planned | **UI.** Orb, list and run history driven by Kiki's own events. Starts only after [DESIGN.md](DESIGN.md) is written. |
 
 ### Functional requirements
@@ -81,9 +81,9 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 
 Ordering or any purchase, multi-turn conversation or follow-up questions, confirmation dialogs, decrementing quantities, multiple lists, voice recognition or per-person permissions, exporting or syncing the list to phones ([ADR 0014](docs/adr/0014-reject-list-export-to-phone.md)), access from other devices on the network, offline fallback, non-English speech, a camera, and real hardware.
 
-### Open checks (verify early in v0.2)
+### Open checks
 
-- openWakeWord can run as a custom Pipecat processor in front of STT, so nothing is transcribed before the wake word. Read how [indyfive11/voice-agent](https://github.com/indyfive11/voice-agent) wires its wake-word gate first.
+- ~~openWakeWord can run as a custom Pipecat processor in front of STT.~~ Verified in v0.2: `WakeGate` in `voice.py`, covered by `test_nfr_0_1_*`.
 
 ---
 
