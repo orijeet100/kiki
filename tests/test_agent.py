@@ -161,6 +161,7 @@ def test_nfr_0_4_turn_has_event_schema_fields(conn):
         "ts",
         "source",
         "heard",
+        "previous_command",
         "tool_calls",
         "said",
         "model",
@@ -178,3 +179,14 @@ def test_fr_0_10_more_than_two_sentences_is_sent_back_for_a_retry(conn):
     turn = agent.run_turn("add bread and got the eggs", conn, model)
     assert turn["said"] == "Removed eggs; bread was already there."
     assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
+
+
+def test_fr_0_16_previous_command_is_context_only_for_follow_ups(conn):
+    model, seen = scripted(reply("Added eggs."), reply("Added eggs."))
+    follow_up = agent.run_turn("and eggs", conn, model, previous_command="add chicken")
+    assert '"add chicken"' in seen[0][0].instructions
+    assert follow_up["previous_command"] == "add chicken"
+
+    alone = agent.run_turn("and eggs", conn, model)
+    assert "a few seconds ago" not in seen[1][0].instructions
+    assert alone["previous_command"] is None

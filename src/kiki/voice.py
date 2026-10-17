@@ -45,8 +45,16 @@ WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
 WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
 WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
+# After each spoken reply, Kiki listens this long without the wake word (ADR 0022).
+FOLLOW_UP_SECS = float(os.environ.get("KIKI_FOLLOW_UP_SECS", "5"))
+# The end of Kiki's own reply can still be in the room when playback ends; ignore it.
+ECHO_GUARD_SECS = 0.3
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
+# Smart Turn is trained to judge at 0.2 s; at 0.5 s it called "Can you add one..." finished.
 PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
+# After a pause sounds finished, wait this much longer for more words before closing. Covers
+# the commas in a spoken list: "Add milk, ..." sounds finished, but "two apples" follows.
+END_GRACE_SECS = float(os.environ.get("KIKI_END_GRACE_SECS", "0.4"))
 # Silence that ends a command even if it sounded unfinished (someone stopped mid-sentence).
 MAX_PAUSE_SECS = float(os.environ.get("KIKI_MAX_PAUSE_SECS", "3"))
 # base.en takes 0.5 s per command vs 1.6 s for small.en; small.en is the fallback if it mishears.
@@ -86,10 +94,12 @@ def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
 
 
 class WakeGate(FrameProcessor):
-    """Drops mic audio until the wake word; then lets one command through (FR-0.11, NFR-0.1).
+    """Drops mic audio unless Kiki is listening for a command (FR-0.11, FR-0.16, NFR-0.1).
 
-    The command ends when EndOfTurnDetector says so (UserStoppedSpeakingFrame), not at the
-    first pause. Saying the wake word while Kiki speaks interrupts the speech (FR-0.12).
+    Kiki listens after the wake word, and for FOLLOW_UP_SECS after each spoken reply with no
+    wake word (ADR 0022). Each listening session lets one command through; it ends when
+    EndOfTurnDetector says so (UserStoppedSpeakingFrame), not at the first pause. Saying the
+    wake word while Kiki speaks interrupts the speech (FR-0.12).
     """
 
     def __init__(self, detect: Callable[[np.ndarray], float] | None = None, **kwargs):
@@ -98,8 +108,10 @@ class WakeGate(FrameProcessor):
         self._buffer = bytearray()
         self._last_wake = -WAKE_REFRACTORY_SECS
         self._listening = False
+        self._follow_up = False  # this session started after a reply, not the wake word
         self._heard_speech = False
-        self._listening_since = 0.0
+        self._opens_at = 0.0
+        self._gives_up_at = 0.0  # close if nobody has spoken by then
         self._bot_speaking = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -107,24 +119,26 @@ class WakeGate(FrameProcessor):
 
         if isinstance(frame, InputAudioRawFrame):
             if self._heard_wake_word(frame.audio):
-                await self._start_listening()
-            silent_too_long = (
-                time.monotonic() - self._listening_since > LISTEN_TIMEOUT_SECS
-            )
-            if self._listening and not self._heard_speech and silent_too_long:
+                await self._start_listening(LISTEN_TIMEOUT_SECS, follow_up=False)
+            now = time.monotonic()
+            if self._listening and not self._heard_speech and now > self._gives_up_at:
                 await self._stop_listening()
-            if self._listening:
+            if self._listening and now >= self._opens_at:
                 await self.push_frame(frame, direction)
             return  # closed gate: audio goes nowhere
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
             self._heard_speech = True
         elif isinstance(frame, UserStoppedSpeakingFrame) and self._listening:
-            await self._stop_listening()  # one command per wake word
+            await self._stop_listening()  # one command per session
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
+            if (
+                not self._listening
+            ):  # after an interruption the wake session is already open
+                await self._start_listening(FOLLOW_UP_SECS, follow_up=True)
         await self.push_frame(frame, direction)
 
     def _heard_wake_word(self, audio: bytes) -> bool:
@@ -142,19 +156,29 @@ class WakeGate(FrameProcessor):
                     heard = True
         return heard
 
-    async def _start_listening(self):
+    async def _start_listening(self, timeout: float, follow_up: bool):
         if self._bot_speaking:
             await self.broadcast_interruption()
+        delay = ECHO_GUARD_SECS if follow_up else 0
+        now = time.monotonic()
         self._listening = True
+        self._follow_up = follow_up
         self._heard_speech = False
-        self._listening_since = time.monotonic()
+        self._opens_at = now + delay
+        self._gives_up_at = now + delay + timeout
         set_state("listening")
-        await self._play(LISTENING_CHIME)
+        if (
+            not follow_up
+        ):  # a chime after every reply would get old fast; the orb shows it
+            await self._play(LISTENING_CHIME)
 
     async def _stop_listening(self):
         self._listening = False
         set_state("thinking" if self._heard_speech else "idle")
-        await self._play(DONE_CHIME)
+        if (
+            self._heard_speech or not self._follow_up
+        ):  # an unused follow-up ends silently
+            await self._play(DONE_CHIME)
 
     async def _play(self, pcm: bytes):
         await self.push_frame(
@@ -166,9 +190,11 @@ class EndOfTurnDetector(FrameProcessor):
     """Ends a spoken command when it sounds finished, not at the first pause (ADR 0021).
 
     VAD reports every pause longer than PAUSE_SECS. At each one, Smart Turn (a small local
-    model that listens to intonation) judges whether the sentence is finished. Pauses that
-    aren't the end are hidden from Whisper, so it transcribes the whole command once. After
-    MAX_PAUSE_SECS of silence the command ends anyway.
+    model that listens to intonation) judges whether the sentence is finished. If it sounds
+    finished and nobody speaks for END_GRACE_SECS more, the command ends; speech in the grace
+    period (a list comma) keeps the same command going. Pauses that aren't the end are hidden
+    from Whisper, so it transcribes the whole command once. After MAX_PAUSE_SECS of silence
+    the command ends anyway.
     """
 
     def __init__(self, analyzer: BaseTurnAnalyzer | None = None, **kwargs):
@@ -179,6 +205,7 @@ class EndOfTurnDetector(FrameProcessor):
         self._analyzer.set_sample_rate(SAMPLE_RATE)
         self._in_command = False
         self._speaking = False
+        self._ends_at: float | None = None  # set while waiting out the grace period
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -187,6 +214,7 @@ class EndOfTurnDetector(FrameProcessor):
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
             self._speaking = True
+            self._ends_at = None  # more words: not the end after all
             self._analyzer.update_vad_start_secs(frame.start_secs)
             if self._in_command:
                 return  # speech resumed after a pause: still the same command
@@ -196,7 +224,7 @@ class EndOfTurnDetector(FrameProcessor):
             if self._in_command:
                 state, _ = await self._analyzer.analyze_end_of_turn()
                 if state == EndOfTurnState.COMPLETE:
-                    await self._end_command()
+                    self._ends_at = time.monotonic() + END_GRACE_SECS
             return  # a pause; Whisper only hears about the end of the command
         elif isinstance(frame, InputAudioRawFrame):
             silence_ran_out = (
@@ -204,13 +232,15 @@ class EndOfTurnDetector(FrameProcessor):
                 == EndOfTurnState.COMPLETE
             )
             await self.push_frame(frame, direction)
-            if silence_ran_out and self._in_command:
+            grace_over = self._ends_at is not None and time.monotonic() >= self._ends_at
+            if self._in_command and (silence_ran_out or grace_over):
                 await self._end_command()
             return
         await self.push_frame(frame, direction)
 
     async def _end_command(self):
         self._in_command = False
+        self._ends_at = None
         self._analyzer.clear()
         await self.push_frame(
             VADUserStoppedSpeakingFrame(stop_secs=PAUSE_SECS)
@@ -221,20 +251,29 @@ class EndOfTurnDetector(FrameProcessor):
 
 
 class Brain(FrameProcessor):
-    """Transcript in, spoken reply out, via the same agent as the terminal (v0.1)."""
+    """Transcript in, spoken reply out, via the same agent as the terminal (v0.1).
+
+    A command that starts within the follow-up window after a reply is sent with the
+    previous command as context, so "and eggs" after "add chicken" makes sense (ADR 0022).
+    """
 
     def __init__(self, conn, model=None, **kwargs):
         super().__init__(**kwargs)
         self._conn = conn
         self._model = model
+        self._speech_started = 0.0
         self._speech_ended = time.monotonic()
+        self._reply_ended: float | None = None
+        self._last_command: str | None = None
         self._waiting_for_speech: tuple[dict, float] | None = None
         self._last_error = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, VADUserStoppedSpeakingFrame):
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            self._speech_started = time.monotonic()
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
             self._speech_ended = time.monotonic()
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
             await self._answer(frame.text.strip())
@@ -244,6 +283,7 @@ class Brain(FrameProcessor):
             if self._waiting_for_speech:
                 self._log_turn(time.monotonic())
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._reply_ended = time.monotonic()
             set_state("error" if self._last_error else "idle")
         await self.push_frame(frame, direction)
 
@@ -253,11 +293,22 @@ class Brain(FrameProcessor):
         ):  # previous reply never started playing; log it anyway
             self._log_turn(None)
         stt_done = time.monotonic()
-        turn = await asyncio.to_thread(run_turn, text, self._conn, self._model, "voice")
+        previous = self._last_command if self._is_follow_up() else None
+        self._last_command = text
+        turn = await asyncio.to_thread(
+            run_turn, text, self._conn, self._model, "voice", previous
+        )
         turn["latency_ms"]["stt"] = round((stt_done - self._speech_ended) * 1000)
         self._last_error = bool(turn["error"])
         self._waiting_for_speech = (turn, time.monotonic())
         await self.push_frame(TTSSpeakFrame(turn["said"]))
+
+    def _is_follow_up(self) -> bool:
+        """Did this command start within the follow-up window after the last reply?"""
+        if self._reply_ended is None:
+            return False
+        since_reply = self._speech_started - self._reply_ended
+        return 0 <= since_reply <= ECHO_GUARD_SECS + FOLLOW_UP_SECS
 
     def _log_turn(self, first_audio: float | None):
         turn, reply_ready = self._waiting_for_speech

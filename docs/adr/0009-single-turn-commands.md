@@ -1,6 +1,6 @@
 # 0009. Every command is single-turn
 
-- Status: Accepted
+- Status: Accepted; amended by 0022 (a follow-up gets the previous command as context)
 - Date: 2026-10-17
 - Related: FR-0.6, FR-0.7, FR-0.8, FR-0.9
 

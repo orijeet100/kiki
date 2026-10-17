@@ -15,6 +15,7 @@ import pytest
 from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     InputAudioRawFrame,
     InterruptionFrame,
     OutputAudioRawFrame,
@@ -135,9 +136,10 @@ class FakeSpeaker(FrameProcessor):
         if isinstance(frame, TTSAudioRawFrame) and not self._speaking:
             self._speaking = True
             await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
-        elif isinstance(frame, TTSStoppedFrame):
-            self._speaking = False
         await self.push_frame(frame, direction)
+        if isinstance(frame, TTSStoppedFrame) and self._speaking:
+            self._speaking = False
+            await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
 
 
 def states_during(frames) -> list[str]:
@@ -214,7 +216,8 @@ def detector_output(analyzer, frames):
     return asyncio.run(run_test(detector, frames_to_send=frames))
 
 
-def test_fr_0_14_mid_sentence_pause_is_hidden_from_speech_to_text():
+def test_fr_0_14_mid_sentence_pause_is_hidden_from_speech_to_text(monkeypatch):
+    monkeypatch.setattr(voice, "END_GRACE_SECS", 0)
     analyzer = ScriptedTurnAnalyzer(EndOfTurnState.INCOMPLETE, EndOfTurnState.COMPLETE)
     frames = [
         VADUserStartedSpeakingFrame(),
@@ -224,24 +227,43 @@ def test_fr_0_14_mid_sentence_pause_is_hidden_from_speech_to_text():
         VADUserStartedSpeakingFrame(),
         *silence(0.1),
         VADUserStoppedSpeakingFrame(),  # "... garlic and one onion" sounds finished
+        *silence(0.04),
     ]
     down, up = detector_output(analyzer, frames)
     starts = [f for f in down if isinstance(f, VADUserStartedSpeakingFrame)]
     stops = [f for f in down if isinstance(f, VADUserStoppedSpeakingFrame)]
     assert len(starts) == 1 and len(stops) == 1  # Whisper hears one command
-    assert down.index(stops[0]) == len(down) - 1  # ...ending after all the audio
     assert [f for f in up if isinstance(f, UserStoppedSpeakingFrame)]  # the gate closes
 
 
-def test_fr_0_14_a_finished_sentence_ends_at_the_first_pause():
+def test_fr_0_14_a_finished_sentence_ends_after_the_grace_period(monkeypatch):
+    monkeypatch.setattr(voice, "END_GRACE_SECS", 0)
     frames = [
         VADUserStartedSpeakingFrame(),
         *silence(0.1),
         VADUserStoppedSpeakingFrame(),
+        *silence(0.04),
     ]
     down, up = detector_output(ScriptedTurnAnalyzer(EndOfTurnState.COMPLETE), frames)
     assert sum(isinstance(f, VADUserStoppedSpeakingFrame) for f in down) == 1
     assert sum(isinstance(f, UserStoppedSpeakingFrame) for f in up) == 1
+
+
+def test_fr_0_14_speech_in_the_grace_period_is_the_same_command(monkeypatch):
+    """A list comma: "Add milk," sounds finished, but "two apples" follows within the grace."""
+    monkeypatch.setattr(voice, "END_GRACE_SECS", 10)
+    analyzer = ScriptedTurnAnalyzer(EndOfTurnState.COMPLETE, EndOfTurnState.COMPLETE)
+    frames = [
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),  # "Add milk," sounds finished: grace starts
+        *silence(0.1),
+        VADUserStartedSpeakingFrame(),  # "two apples and some rice" within the grace
+        *silence(0.1),
+    ]
+    down, _ = detector_output(analyzer, frames)
+    assert not any(isinstance(f, VADUserStoppedSpeakingFrame) for f in down)
+    assert sum(isinstance(f, VADUserStartedSpeakingFrame) for f in down) == 1
 
 
 def test_fr_0_14_long_silence_ends_an_unfinished_sentence():
@@ -259,6 +281,131 @@ def test_fr_0_14_long_silence_ends_an_unfinished_sentence():
     analyzer.answers = [EndOfTurnState.INCOMPLETE]
     down, up = detector_output(analyzer, [*frames, *silence(0.1)])
     assert sum(isinstance(f, UserStoppedSpeakingFrame) for f in up) == 1
+
+
+def gate_after_reply(frames, monkeypatch, echo_guard=0.0, follow_up=5.0):
+    """Run the gate: Kiki finishes a reply, then these frames arrive."""
+    monkeypatch.setattr(voice, "ECHO_GUARD_SECS", echo_guard)
+    monkeypatch.setattr(voice, "FOLLOW_UP_SECS", follow_up)
+    gate = voice.WakeGate(detect=FakeDetector())
+
+    async def go():
+        await run_test(
+            gate,
+            frames_to_send=[BotStartedSpeakingFrame(), BotStoppedSpeakingFrame()],
+            frames_to_send_direction=FrameDirection.UPSTREAM,
+        )
+        return await run_test(gate, frames_to_send=frames)
+
+    down, _ = asyncio.run(go())
+    return down
+
+
+def test_fr_0_16_listens_after_a_reply_without_the_wake_word(monkeypatch):
+    down = gate_after_reply(silence(0.2), monkeypatch)
+    assert any(isinstance(f, InputAudioRawFrame) for f in down)
+    assert chimes(down) == []  # no chime after every reply
+
+
+def test_fr_0_16_echo_guard_drops_the_end_of_kikis_own_reply(monkeypatch):
+    down = gate_after_reply(silence(0.2), monkeypatch, echo_guard=10)
+    assert not any(isinstance(f, InputAudioRawFrame) for f in down)
+
+
+def test_fr_0_16_an_unused_follow_up_window_closes_silently(monkeypatch):
+    from kiki import events
+
+    subscription = events.subscribe()
+    try:
+        down = gate_after_reply(silence(0.2), monkeypatch, follow_up=-1)
+        states = []
+        while not subscription.empty():
+            event = subscription.get()
+            if event["type"] == "state":
+                states.append(event["value"])
+    finally:
+        events.unsubscribe(subscription)
+    assert chimes(down) == []
+    assert states == ["listening", "idle"]
+
+
+def test_fr_0_16_no_follow_up_window_over_an_interrupted_reply(monkeypatch):
+    """Wake word mid-reply: the wake session must not be replaced when the reply stops."""
+    monkeypatch.setattr(
+        voice, "ECHO_GUARD_SECS", 10
+    )  # would drop audio if a follow-up opened
+    gate = voice.WakeGate(detect=FakeDetector())
+
+    async def go():
+        await run_test(
+            gate,
+            frames_to_send=[BotStartedSpeakingFrame()],
+            frames_to_send_direction=FrameDirection.UPSTREAM,
+        )
+        await run_test(gate, frames_to_send=WAKE)
+        await run_test(
+            gate,
+            frames_to_send=[BotStoppedSpeakingFrame()],
+            frames_to_send_direction=FrameDirection.UPSTREAM,
+        )
+        return await run_test(gate, frames_to_send=silence(0.2))
+
+    down, _ = asyncio.run(go())
+    assert any(isinstance(f, InputAudioRawFrame) for f in down)
+
+
+def test_fr_0_16_brain_sends_the_previous_command_with_a_follow_up(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
+    seen = []
+
+    def model_fn(messages, info):
+        seen.append(messages[0].instructions)
+        return ModelResponse(parts=[ToolCallPart("update_list", {"reply": "Okay."})])
+
+    brain = voice.Brain(connect(str(tmp_path / "b.db")), FunctionModel(model_fn))
+
+    def command(text):
+        return [
+            VADUserStartedSpeakingFrame(),
+            TranscriptionFrame(text, "user", "2026-10-17T00:00:00Z"),
+        ]
+
+    async def go():
+        await run_test(brain, frames_to_send=command("I want to add chicken"))
+        await run_test(
+            brain,
+            frames_to_send=[BotStoppedSpeakingFrame()],
+            frames_to_send_direction=FrameDirection.UPSTREAM,
+        )
+        await run_test(brain, frames_to_send=command("and eggs"))
+
+    asyncio.run(go())
+    assert "a few seconds ago" not in seen[0]
+    assert '"I want to add chicken"' in seen[1]
+
+
+class RealTimeMic(FrameProcessor):
+    """Releases mic frames at the pace a real microphone would (20 ms per 20 ms frame).
+
+    Smart Turn and VAD keep wall-clock time, so audio pushed all at once gets judged wrong.
+    Waiting in a test is spelled as `silence(...)`, never `SleepFrame`, because a real mic
+    keeps sending silence and the 3 s end-of-command fallback counts it.
+    """
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, InputAudioRawFrame):
+            await asyncio.sleep(len(frame.audio) / 2 / frame.sample_rate)
+        await self.push_frame(frame, direction)
+
+
+def voice_pipeline(conn, model=None, speaker=False):
+    from pipecat.pipeline.pipeline import Pipeline
+
+    tail = [FakeSpeaker()] if speaker else []
+    return Pipeline([RealTimeMic(), *voice.processors(conn, model), *tail])
 
 
 # --- real models on synthesized speech -------------------------------------------------
@@ -292,7 +439,6 @@ def speak():
 
 def run_voice(tmp_path, audio_frames):
     """The app's own processor chain (gate, VAD, Whisper, Brain, Piper) with a scripted model."""
-    from pipecat.pipeline.pipeline import Pipeline
 
     heard = []
 
@@ -305,9 +451,9 @@ def run_voice(tmp_path, audio_frames):
         return ModelResponse(parts=[ToolCallPart("update_list", args)])
 
     conn = connect(str(tmp_path / "voice.db"))
-    pipeline = Pipeline(voice.processors(conn, FunctionModel(model_fn)))
+    pipeline = voice_pipeline(conn, FunctionModel(model_fn))
     down, _ = asyncio.run(
-        run_test(pipeline, frames_to_send=[*audio_frames, SleepFrame(sleep=15)])
+        run_test(pipeline, frames_to_send=[*audio_frames, SleepFrame(sleep=5)])
     )
     return down, heard, conn
 
@@ -320,7 +466,7 @@ def test_nfr_0_2_end_to_end_only_text_reaches_the_model(tmp_path, speak, monkeyp
         *mic(speak("Hey Jarvis.")),
         *silence(0.3),
         *mic(speak("Add bread and two milks.")),
-        *silence(2),
+        *silence(4),
     ]
     down, heard, conn = run_voice(tmp_path, audio)
     assert len(heard) == 1 and isinstance(heard[0], str), (
@@ -333,7 +479,7 @@ def test_nfr_0_2_end_to_end_only_text_reaches_the_model(tmp_path, speak, monkeyp
 
 @pytest.mark.voice
 def test_nfr_0_1_no_wake_word_nothing_transcribed(tmp_path, speak):
-    audio = [*silence(0.5), *mic(speak("Add bread and two milks.")), *silence(2)]
+    audio = [*silence(0.5), *mic(speak("Add bread and two milks.")), *silence(4)]
     down, heard, conn = run_voice(tmp_path, audio)
     assert heard == []
     assert not any(isinstance(f, TranscriptionFrame | TTSAudioRawFrame) for f in down)
@@ -371,7 +517,6 @@ def test_scenario_by_voice(
     tmp_path, speak, monkeypatch, number, seed, command, expected
 ):
     from pipecat.frames.frames import TTSTextFrame
-    from pipecat.pipeline.pipeline import Pipeline
 
     monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
     conn = connect(str(tmp_path / "voice.db"))
@@ -385,12 +530,12 @@ def test_scenario_by_voice(
         *mic(speak("Hey Jarvis.")),
         *silence(0.3),
         *mic(speak(command)),
-        *silence(2),
+        *silence(4),
     ]
     down, _ = asyncio.run(
         run_test(
-            Pipeline(voice.processors(conn)),
-            frames_to_send=[*audio, SleepFrame(sleep=20)],
+            voice_pipeline(conn),
+            frames_to_send=[*audio, SleepFrame(sleep=8)],
         )
     )
     state = {
@@ -425,12 +570,14 @@ LATENCY_COMMANDS = [
 )
 def test_nfr_0_3_median_end_of_speech_to_first_audio(tmp_path, speak, monkeypatch):
     """Twenty spoken commands through the full chain; median from the turn log, as in the ROADMAP."""
-    from pipecat.pipeline.pipeline import Pipeline
 
     from kiki.latency import report
 
     log = tmp_path / "turns.jsonl"
     monkeypatch.setenv("KIKI_LOG", str(log))
+    monkeypatch.setattr(
+        voice, "FOLLOW_UP_SECS", 0
+    )  # every command here starts with the wake word
     conn = connect(str(tmp_path / "voice.db"))
     frames = []
     for command in LATENCY_COMMANDS * 2:
@@ -439,12 +586,14 @@ def test_nfr_0_3_median_end_of_speech_to_first_audio(tmp_path, speak, monkeypatc
             *mic(speak("Hey Jarvis.")),
             *silence(0.3),
             *mic(speak(command)),
-            *silence(1.5),
-            SleepFrame(sleep=6),
+            *silence(
+                5
+            ),  # end of command, then Kiki answers while the mic keeps listening
         ]
     asyncio.run(
         run_test(
-            Pipeline([*voice.processors(conn), FakeSpeaker()]), frames_to_send=frames
+            voice_pipeline(conn, speaker=True),
+            frames_to_send=[*frames, SleepFrame(sleep=3)],
         )
     )
     medians = report(str(log))
@@ -484,3 +633,40 @@ def test_fr_0_14_end_to_end_a_pause_mid_sentence_keeps_listening(
     _, heard, _ = run_voice(tmp_path, audio)
     assert len(heard) == 1, heard
     assert "garlic" in heard[0].lower() and "onion" in heard[0].lower(), heard
+
+
+@pytest.mark.voice
+@pytest.mark.scenario
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"), reason="needs ANTHROPIC_API_KEY"
+)
+def test_fr_0_16_end_to_end_follow_up_without_the_wake_word(
+    tmp_path, speak, monkeypatch
+):
+    """ "Hey Jarvis. I want to add chicken." ... reply ... "And eggs." (no wake word)."""
+
+    from kiki import events
+
+    log = tmp_path / "turns.jsonl"
+    monkeypatch.setenv("KIKI_LOG", str(log))
+    monkeypatch.setattr(
+        voice, "FOLLOW_UP_SECS", 30
+    )  # the reply's timing varies in a test run
+    conn = connect(str(tmp_path / "voice.db"))
+    frames = [
+        *silence(0.5),
+        *mic(speak("Hey Jarvis.")),
+        *silence(0.3),
+        *mic(speak("I want to add chicken.")),
+        *silence(8),  # Kiki answers; the follow-up window opens
+        *mic(speak("And eggs.")),
+        *silence(4),
+        SleepFrame(sleep=5),
+    ]
+    asyncio.run(run_test(voice_pipeline(conn, speaker=True), frames_to_send=frames))
+    names = {tools.normalize(i["name"]) for i in tools.read_list(conn)["items"]}
+    assert names == {"chicken", "egg"}, names
+    turns = events.recent_turns(path=str(log))
+    assert (
+        len(turns) == 2 and "chicken" in (turns[1]["previous_command"] or "").lower()
+    ), turns
