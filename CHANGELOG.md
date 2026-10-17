@@ -4,6 +4,9 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+- Softer chimes: the bare 16 kHz beeps are replaced by "glass" tones (sine plus gentle harmonics, click-free attack, natural ring-out, 48 kHz), picked by ear from three styles. Rising fifth when listening starts, falling pair when it stops.
+
 ### Reverted
 - v0.6 (the 5-second follow-up window and the end-of-command grace period) is rolled back to v0.5 behavior. With a movie playing, the follow-up window took the dialogue as commands, and each answer opened a new window, so Kiki kept listening and answering. Kiki again listens only after "hey jarvis". The v0.6 work stays in git (tag `v0.6`) and the mic watchdog is parked on the `v0-listening-state-fix` branch.
 

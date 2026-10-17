@@ -60,19 +60,39 @@ WHISPER_PROMPT = (
 PIPER_VOICE = os.environ.get("KIKI_PIPER_VOICE", "en_US-lessac-medium")
 
 
-def chime(freqs: list[float], ms: int = 80) -> bytes:
-    """Short sine tones with fades, as 16 kHz int16 PCM."""
-    n = SAMPLE_RATE * ms // 1000
-    fade = np.minimum(
-        1, np.minimum(np.arange(n), np.arange(n)[::-1]) / (SAMPLE_RATE * 0.006)
-    )
-    t = np.arange(n) / SAMPLE_RATE
-    pcm = np.concatenate([np.sin(2 * np.pi * f * t) * fade for f in freqs])
-    return (pcm * 0.25 * 32767).astype("<i2").tobytes()
+CHIME_RATE = 48000  # rendered at full quality; the speaker output resamples as needed
 
 
-LISTENING_CHIME = chime([660, 990])  # rising: "I'm listening"
-DONE_CHIME = chime([990, 660])  # falling: "I stopped listening"
+def chime(notes: list[tuple[float, float, float]]) -> bytes:
+    """A soft glass chime as 48 kHz int16 PCM. `notes` are (frequency Hz, start s, gain).
+
+    Each note is a sine with gentle 2nd and 3rd harmonics (upper ones fade faster), a
+    raised-cosine attack so there is no click, and a natural ring-out. Picked by ear by the
+    owner from three styles (glass, marimba, bell).
+    """
+    partials = [(1, 1.0), (2, 0.22), (3, 0.06)]  # (frequency ratio, amplitude)
+    decay, attack, tail = 0.18, 0.006, 0.6
+    out = np.zeros(int(CHIME_RATE * (max(start for _, start, _ in notes) + tail)))
+    for freq, start, gain in notes:
+        i = int(CHIME_RATE * start)
+        t = np.arange(len(out) - i) / CHIME_RATE
+        rise = 0.5 - 0.5 * np.cos(np.pi * np.clip(t / attack, 0, 1))
+        tone = sum(
+            amp
+            * np.sin(2 * np.pi * freq * ratio * t)
+            * np.exp(-t / (decay / ratio**0.5))
+            for ratio, amp in partials
+        )
+        out[i:] += gain * tone * rise * np.exp(-t / (decay * 3))
+    fade = int(CHIME_RATE * 0.01)
+    out[-fade:] *= np.linspace(1, 0, fade)  # end exactly at silence: no click
+    out *= 0.32 / np.max(np.abs(out))  # about -10 dBFS: clear, not loud
+    return (out * 32767).astype("<i2").tobytes()
+
+
+# Rising fifth (C6 to G6): "I'm listening". Falling (D6 to G5): "I stopped listening".
+LISTENING_CHIME = chime([(1046.5, 0.0, 1.0), (1568.0, 0.09, 0.85)])
+DONE_CHIME = chime([(1174.7, 0.0, 0.8), (784.0, 0.09, 0.9)])
 
 
 def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
@@ -158,7 +178,7 @@ class WakeGate(FrameProcessor):
 
     async def _play(self, pcm: bytes):
         await self.push_frame(
-            OutputAudioRawFrame(audio=pcm, sample_rate=SAMPLE_RATE, num_channels=1)
+            OutputAudioRawFrame(audio=pcm, sample_rate=CHIME_RATE, num_channels=1)
         )
 
 
