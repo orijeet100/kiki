@@ -53,4 +53,5 @@ uvx ruff check . && uvx ruff format .         # lint and format
 uv run --env-file .env python -m kiki.cli     # terminal loop (v0.1)
 uv run --env-file .env python -m kiki.voice   # voice loop (v0.2): say "hey jarvis"
 uv run pytest -m "not voice and not scenario" # instant tests only
+uv run python -m kiki.latency                 # median voice latency from the turn log (NFR-0.3)
 ```

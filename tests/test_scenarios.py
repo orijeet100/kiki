@@ -114,5 +114,11 @@ def test_scenario_11_fr_0_8_garbled(conn):
     seed(conn, ("rice", 1))
     turn = agent.run_turn("Blorp the frim", conn)
     assert state(conn) == {"rice": 1}
-    assert called(turn) in ([], ["read_list"])
+    assert called(turn) == []
     assert turn["said"] == agent.DIDNT_CATCH
+
+
+def test_scenario_12_fr_0_4_misheard_got_means_remove(conn):
+    seed(conn, ("eggs", 1), ("rice", 1))
+    agent.run_turn("Dot the eggs.", conn)
+    assert state(conn) == {"rice": 1}

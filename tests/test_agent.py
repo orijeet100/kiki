@@ -1,4 +1,4 @@
-"""Agent loop against Pydantic AI's FunctionModel: no network, no cost."""
+"""Agent against Pydantic AI's FunctionModel: no network, no cost."""
 
 import pytest
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolCallPart
@@ -19,8 +19,9 @@ def scripted(*responses):
     return FunctionModel(fn), seen
 
 
-def call(name, args):
-    return ModelResponse(parts=[ToolCallPart(name, args)])
+def update(**args):
+    """The model calling update_list."""
+    return ModelResponse(parts=[ToolCallPart("update_list", args)])
 
 
 def reply(text):
@@ -34,9 +35,7 @@ def conn(tmp_path):
 
 def test_fr_0_9_single_turn_request_has_only_list_and_command(conn):
     tools.add_items(conn, [{"name": "bread"}])
-    model, seen = scripted(
-        call("add_items", {"items": [{"name": "milk"}]}), reply("Added milk.")
-    )
+    model, seen = scripted(update(add=[{"name": "milk"}], reply="Added milk."))
 
     turn = agent.run_turn("add milk", conn, model)
 
@@ -58,15 +57,57 @@ def test_fr_0_9_single_turn_request_has_only_list_and_command(conn):
     assert {i["name"] for i in tools.read_list(conn)["items"]} == {"bread", "milk"}
 
 
-def test_fr_0_3_list_snapshot_does_not_change_mid_turn(conn):
+def test_nfr_0_3_a_change_takes_one_model_request(conn):
+    model, seen = scripted(update(add=[{"name": "milk"}], reply="Added milk."))
+    agent.run_turn("add milk", conn, model)
+    assert len(seen) == 1
+
+
+def test_fr_0_5_every_change_in_one_call_applies_in_order(conn):
+    tools.add_items(conn, [{"name": "milk"}, {"name": "rice"}])
+    model, _ = scripted(
+        update(
+            remove=["milk"],
+            add=[{"name": "bread"}],
+            set_quantities=[{"name": "rice", "quantity": 2}],
+            reply="Removed milk, added bread, and rice is now two.",
+        )
+    )
+    turn = agent.run_turn("take off milk, add bread, two rice", conn, model)
+    assert [c["name"] for c in turn["tool_calls"]] == [
+        "remove_items",
+        "add_items",
+        "set_quantity",
+    ]
+    assert {i["name"]: i["quantity"] for i in tools.read_list(conn)["items"]} == {
+        "rice": 2,
+        "bread": 1,
+    }
+
+
+def test_fr_0_7_clear_then_add_in_one_call(conn):
+    tools.add_items(conn, [{"name": "milk"}])
+    model, _ = scripted(update(clear=True, add=[{"name": "eggs"}], reply="Done."))
+    agent.run_turn("clear the list and add eggs", conn, model)
+    assert [i["name"] for i in tools.read_list(conn)["items"]] == ["eggs"]
+
+
+def test_fr_0_3_list_snapshot_does_not_change_on_retry(conn):
     tools.add_items(conn, [{"name": "bread"}])
     model, seen = scripted(
-        call("set_quantity", {"name": "bread", "quantity": 2}), reply("Two breads now.")
+        update(
+            set_quantities=[{"name": "bread", "quantity": 2}], reply="Bread is now 2."
+        ),
+        update(
+            set_quantities=[{"name": "bread", "quantity": 2}], reply="Bread is now two."
+        ),
     )
-    agent.run_turn("add another bread", conn, model)
+    turn = agent.run_turn("add another bread", conn, model)
+    assert turn["said"] == "Bread is now two."
     assert (
         "bread x1" in seen[1][-1].instructions
-    )  # second request still sees the start state
+    )  # the retry still sees the start state
+    assert tools.read_list(conn)["items"] == [{"name": "bread", "quantity": 2}]
 
 
 def test_fr_0_8_no_usable_reply_falls_back_to_didnt_catch(conn):
@@ -84,9 +125,10 @@ def test_fr_0_10_markdown_or_digits_are_sent_back_for_a_retry(conn):
     assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
 
 
-def test_bad_tool_args_are_rejected_before_the_tool_runs(conn):
+def test_bad_arguments_are_rejected_before_anything_changes(conn):
     model, seen = scripted(
-        call("set_quantity", {"name": "milk", "quantity": 0}), reply(agent.DIDNT_CATCH)
+        update(set_quantities=[{"name": "milk", "quantity": 0}], reply="Okay."),
+        reply(agent.DIDNT_CATCH),
     )
     turn = agent.run_turn("make it zero milks", conn, model)
     assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
@@ -95,23 +137,19 @@ def test_bad_tool_args_are_rejected_before_the_tool_runs(conn):
 
 def test_tool_errors_are_logged_and_retried(conn, monkeypatch):
     monkeypatch.setattr(tools, "clear_list", lambda conn: {"error": "disk on fire"})
-    model, seen = scripted(call("clear_list", {}), reply("Sorry, I didn't catch that."))
+    model, seen = scripted(
+        update(clear=True, reply="Cleared."), reply(agent.DIDNT_CATCH)
+    )
     turn = agent.run_turn("clear the list", conn, model)
     assert turn["tool_calls"][0]["result"] == {"error": "disk on fire"}
     assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
-
-
-def test_runaway_tool_loop_stops_with_error(conn):
-    model = FunctionModel(lambda messages, info: call("read_list", {}))
-    turn = agent.run_turn("loop", conn, model)
-    assert turn["error"] and "UsageLimitExceeded" in turn["error"]
 
 
 def test_nfr_0_5_model_from_env(conn, monkeypatch):
     monkeypatch.setenv("KIKI_MODEL", "test")  # Pydantic AI's built-in offline TestModel
     turn = agent.run_turn("what's on my list", conn)
     assert turn["model"] == "test"
-    assert turn["tool_calls"]  # TestModel calls every tool, so the env model really ran
+    assert turn["said"]
 
 
 def test_nfr_0_4_turn_has_event_schema_fields(conn):

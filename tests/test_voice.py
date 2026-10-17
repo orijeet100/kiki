@@ -19,12 +19,13 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
+    TTSStoppedFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.tests.utils import SleepFrame, run_test
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from kiki import tools, voice
@@ -117,6 +118,24 @@ def test_fr_0_12_wake_word_while_speaking_interrupts():
     assert any(isinstance(f, InterruptionFrame) for f in up)
 
 
+class FakeSpeaker(FrameProcessor):
+    """Stands in for the speaker: reports BotStartedSpeaking on the first reply audio, as the
+    real output transport does, so the Brain logs voice latencies."""
+
+    def __init__(self):
+        super().__init__()
+        self._speaking = False
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSAudioRawFrame) and not self._speaking:
+            self._speaking = True
+            await self.push_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+        elif isinstance(frame, TTSStoppedFrame):
+            self._speaking = False
+        await self.push_frame(frame, direction)
+
+
 # --- real models on synthesized speech -------------------------------------------------
 
 
@@ -153,17 +172,12 @@ def run_voice(tmp_path, audio_frames):
     heard = []
 
     def model_fn(messages, info):
-        if len(messages) == 1:
-            heard.append(messages[0].parts[0].content)
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        "add_items",
-                        {"items": [{"name": "bread"}, {"name": "milk", "quantity": 2}]},
-                    )
-                ]
-            )
-        return ModelResponse(parts=[TextPart("Added bread and two milks.")])
+        heard.append(messages[0].parts[0].content)
+        args = {
+            "add": [{"name": "bread"}, {"name": "milk", "quantity": 2}],
+            "reply": "Added bread and two milks.",
+        }
+        return ModelResponse(parts=[ToolCallPart("update_list", args)])
 
     conn = connect(str(tmp_path / "voice.db"))
     pipeline = Pipeline(voice.processors(conn, FunctionModel(model_fn)))
@@ -263,3 +277,51 @@ def test_scenario_by_voice(
     assert state == (before if expected is None else expected), (said, state)
     if number == "8":
         assert all(n in said for n in ("bread", "milk", "egg")), said
+
+
+LATENCY_COMMANDS = [
+    "Add bread and eggs.",
+    "What's on my list?",
+    "Add milk and two apples.",
+    "Got the eggs.",
+    "Add some rice.",
+    "Make it three milks.",
+    "What's on my list?",
+    "Remove the apples.",
+    "Add butter and cheese.",
+    "Got the bread and rice.",
+]
+
+
+@pytest.mark.voice
+@pytest.mark.scenario
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"), reason="needs ANTHROPIC_API_KEY"
+)
+def test_nfr_0_3_median_end_of_speech_to_first_audio(tmp_path, speak, monkeypatch):
+    """Twenty spoken commands through the full chain; median from the turn log, as in the ROADMAP."""
+    from pipecat.pipeline.pipeline import Pipeline
+
+    from kiki.latency import report
+
+    log = tmp_path / "turns.jsonl"
+    monkeypatch.setenv("KIKI_LOG", str(log))
+    conn = connect(str(tmp_path / "voice.db"))
+    frames = []
+    for command in LATENCY_COMMANDS * 2:
+        frames += [
+            *silence(0.5),
+            *mic(speak("Hey Jarvis.")),
+            *silence(0.3),
+            *mic(speak(command)),
+            *silence(1.5),
+            SleepFrame(sleep=6),
+        ]
+    asyncio.run(
+        run_test(
+            Pipeline([*voice.processors(conn), FakeSpeaker()]), frames_to_send=frames
+        )
+    )
+    medians = report(str(log))
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 20
+    assert medians["total"] <= 2000, medians

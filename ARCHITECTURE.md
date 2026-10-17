@@ -25,7 +25,7 @@ v0.4 (UI)
 | Orchestration | Pipecat | [0002](docs/adr/0002-use-pipecat-for-voice-orchestration.md) |
 | Wake word | openWakeWord, built-in "hey jarvis", runs before STT | [0003](docs/adr/0003-gate-audio-with-local-wake-word.md) |
 | Audio in/out (v0.2) | Pipecat `LocalAudioTransport`, Python owns mic and speaker | [0011](docs/adr/0011-python-owns-the-mic-in-v0.md) |
-| STT | faster-whisper `small.en` (English-only variant), int8 on CPU | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
+| STT | faster-whisper `base.en` with a grocery-vocabulary prompt, int8 on CPU | [0004](docs/adr/0004-run-stt-and-tts-locally.md), [0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md) |
 | Agent framework | Pydantic AI: tool loop, argument validation, retries, output guard, usage limit | [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
 | Brain | Any Pydantic AI model string, default `anthropic:claude-haiku-5-5` | [0005](docs/adr/0005-use-claude-haiku-by-default.md), [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
 | TTS | Piper, voice `en_US-lessac-medium` (Kokoro if Piper sounds too robotic) | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
@@ -41,12 +41,14 @@ src/kiki/
   agent.py    one command in, one turn out: the Pydantic AI agent, its instructions, tools and guards
   events.py   appends turn events to the log
   cli.py      terminal loop (v0.1)
+  latency.py  median latency per stage from the turn log (v0.3)
   voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
 tests/
   test_tools.py       tools.py against a temp SQLite file
   test_events.py      turn log format
   test_agent.py       agent loop against Pydantic AI's FunctionModel / TestModel
   test_scenarios.py   ROADMAP scenarios against the real Claude API (marked `scenario`)
+  test_latency.py     latency report
   test_voice.py       wake gate with a fake detector; real models on Piper-synthesized speech (marked `voice`)
 web/                  UI (v0.4)
 ```
@@ -57,20 +59,22 @@ web/                  UI (v0.4)
 
 1. A command arrives as text (typed in v0.1, transcribed in v0.2).
 2. `run_turn` snapshots the list once, then calls `agent.run_sync` with only the command. The model sees the static instructions, the snapshot and the command. No previous turns ([ADR 0009](docs/adr/0009-single-turn-commands.md)).
-3. The model calls tools. Each Pydantic AI tool in `agent.py` is a thin wrapper that calls the plain function in `tools.py`, records the call in `Deps.tool_calls` and returns the result.
+3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, clear)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply.
 4. `run_turn` returns a `turn` event. `events.py` appends it to the log. The caller prints or speaks `said`.
 
-**Why the snapshot is taken once:** Pydantic AI re-renders instructions on every model request inside a run. A live list read would show "bread x2" after the first `set_quantity`, and the model would bump "add another bread" again (found by scenario 3).
+**Why the snapshot is taken once:** Pydantic AI re-renders instructions on every model request inside a run, retries included. A live list read after a retry would show "bread x2", and the model would bump "add another bread" again (found by scenario 3 in v0.1).
+
+**Why retries are safe:** every step of `update_list` is idempotent (adding a present item is a no-op, removing a missing item is a no-op, clearing and setting a quantity are absolute), so re-applying a call after a retry changes nothing twice.
 
 ### Guards (all Pydantic AI built-ins)
 
 | Guard | What happens |
 |---|---|
-| Argument validation | Tool parameters are typed (`Item.quantity >= 1`, `set_quantity.quantity >= 1`). Invalid arguments never reach `tools.py`; the model gets a retry prompt. |
+| Argument validation | `update_list` arguments are typed (`Item.quantity >= 1`). Invalid arguments never reach `tools.py`; the model gets a retry prompt. |
 | Tool errors | A tool result with an `error` key is raised as `ModelRetry`, so the model sees the message and can correct itself. The call is still logged. |
-| Output guard | `spoken_style` output validator rejects markdown, bullets, underscores and digits with a retry (FR-0.10). Empty replies are retried by Pydantic AI itself. |
-| Retries | `retries=2` per tool and for the output. |
-| Usage limit | `UsageLimits(request_limit=6)` stops a runaway tool loop. |
+| Output guard | `spoken_style` output validator rejects markdown, bullets, underscores and digits with a retry, for plain-text replies and for the `reply` of `update_list` (FR-0.10). Empty replies are retried by Pydantic AI itself. |
+| Retries | `retries=2`. They also bound the number of model requests per turn. |
+| Request timeout | `timeout=10` seconds: a stalled request becomes "I can't reach the internet right now." instead of hanging for the client's default ten minutes. |
 | Model settings | `thinking="low"` (unified setting, maps to each provider's effort), `max_tokens=4096`. |
 
 ### Failure replies
@@ -78,13 +82,15 @@ web/                  UI (v0.4)
 | Failure | `said` | `error` |
 |---|---|---|
 | Retries exhausted, no speakable reply | "Sorry, I didn't catch that." | `UnexpectedModelBehavior: ...` |
-| No internet (`ModelAPIError`) | "I can't reach the internet right now." | `connection error` |
+| No internet or timeout (`ModelAPIError`) | "I can't reach the internet right now." | `connection error` |
 | API error (`ModelHTTPError`) | "Something went wrong, please try again." | `API error <status>` |
-| Usage limit or other run error | "Something went wrong, please try again." | exception name and message |
+| Any other run error | "Something went wrong, please try again." | exception name and message |
 
 Tools that ran before a failure stay in `tool_calls`, so the log still shows them (for example, a `clear_list` that ran before the connection dropped).
 
-**SQLite and threads:** Pydantic AI runs sync tools in worker threads, so `db.connect` uses `check_same_thread=False`. Calls within a turn are sequential.
+**SQLite and threads:** Pydantic AI runs sync functions in worker threads and voice turns run in a thread too, so `db.connect` uses `check_same_thread=False`. Only one `update_list` runs per turn and turns are sequential, so the connection is never used concurrently.
+
+**Model client:** `load_model()` builds the client once per process (`functools.cache`); the voice loop and the terminal call it at startup. The first build costs about three seconds, which would otherwise land on the first command.
 
 ## Voice loop (v0.2)
 
@@ -94,13 +100,22 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 |---|---|
 | `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when VAD reports the end of speech (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Emits started/stopped-speaking frames; `stop_secs` (`KIKI_VAD_STOP_SECS`, default 0.8) is the silence that ends a command. |
-| `WhisperSTTService` | Transcribes each speech segment locally. |
+| `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are 16 kHz sine tones generated in code: rising (660 → 990 Hz) when listening starts, falling when it stops (FR-0.11).
 
-**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3).
+**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when VAD fires, `KIKI_VAD_STOP_SECS` after you stop talking. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
+
+Measured on this laptop (v0.3, synthesized speech, CPU only):
+
+| Stage | Median |
+|---|---|
+| `stt` (Whisper `base.en`) | ~0.55 s |
+| `llm` (one request: questions ~0.75 s, changes ~0.9–1.2 s) | ~0.9 s |
+| `tts` (Piper first audio) | ~0.08 s |
+| `total` | **~1.5 s** (v0.2 was ~3.0 s) |
 
 **Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
 
@@ -125,14 +140,14 @@ One table, `items`:
 
 ## Tools
 
-All tools are plain functions taking and returning JSON-compatible values ([ADR 0008](docs/adr/0008-tools-are-plain-functions.md)).
+All tools are plain functions taking and returning JSON-compatible values ([ADR 0008](docs/adr/0008-tools-are-plain-functions.md)). The model never calls them directly; it calls `update_list`, which calls them.
 
 | Tool | Input | Output | Notes |
 |---|---|---|---|
 | `add_items` | `items: [{name, quantity?}]` | `{added: [...], already_present: [...]}` | Never changes the quantity of an existing item (FR-0.2) |
 | `set_quantity` | `name, quantity` | `{name, quantity}` or `{not_found: name}` | For explicit changes like "add another milk" or "make it three" (FR-0.3). The model computes the new number from the list snapshot |
 | `remove_items` | `names: [string]` | `{removed: [...], not_found: [...]}` | Deletes the whole item regardless of quantity (FR-0.5) |
-| `read_list` | none | `{items: [{name, quantity}]}` | |
+| `read_list` | none | `{items: [{name, quantity}]}` | Builds the snapshot; not offered to the model, since the snapshot already answers questions |
 | `clear_list` | none | `{removed: [{name, quantity}]}` | No confirmation. The removed items land in the turn log ([ADR 0012](docs/adr/0012-clear-list-without-confirmation.md)) |
 
 ## Events
@@ -174,7 +189,7 @@ Adding a field is fine. Renaming or removing one needs an ADR.
 
 ## Instructions
 
-The source of truth is `INSTRUCTIONS` in `agent.py`, plus a dynamic line "Current list at the start of this request: ...". In short: speak in one or two short sentences with numbers as words; use tools for every change; fix obvious speech-to-text slips; never change an existing item unless the quantity change is explicit; remove means delete completely; read every item when asked; after clearing say only the count; when unsure reply exactly "Sorry, I didn't catch that." and call no tools.
+The source of truth is `INSTRUCTIONS` in `agent.py`, plus a dynamic line "Current list at the start of this request: ...". In short: speak in one or two short sentences with numbers as words; make every change in one `update_list` call; answer questions in plain text; fix obvious speech-to-text slips ("got the X" is often heard as "cut", "dot" or "gut"); never change an existing item unless the quantity change is explicit; remove means delete completely; read every item when asked; after clearing say only the count; when unsure reply exactly "Sorry, I didn't catch that." and call no tools.
 
 ## Configuration
 
@@ -189,7 +204,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
 | `KIKI_VAD_STOP_SECS` | `0.8` | Silence that ends a command |
-| `KIKI_WHISPER_MODEL` | `small.en` | faster-whisper model name |
+| `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 
 ## Dependencies
@@ -213,4 +228,5 @@ UI dependencies are decided with the v0.4 design.
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
+- `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

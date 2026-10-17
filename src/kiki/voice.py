@@ -31,7 +31,7 @@ from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.workers.runner import WorkerRunner
 
-from kiki.agent import run_turn
+from kiki.agent import load_model, model_name, run_turn
 from kiki.db import connect
 from kiki.events import append_turn
 
@@ -42,7 +42,14 @@ WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 # Silence that ends a command. Pipecat's default (0.2 s) cuts people off mid-sentence.
 VAD_STOP_SECS = float(os.environ.get("KIKI_VAD_STOP_SECS", "0.8"))
-WHISPER_MODEL = os.environ.get("KIKI_WHISPER_MODEL", "small.en")
+# base.en takes 0.5 s per command vs 1.6 s for small.en; small.en is the fallback if it mishears.
+WHISPER_MODEL = os.environ.get("KIKI_WHISPER_MODEL", "base.en")
+# Primes Whisper with list vocabulary and spoken quantities. Without it base.en hears "braid",
+# "cut the eggs" and "milk to apples" (ADR 0019).
+WHISPER_PROMPT = (
+    "Grocery list. Add two apples, three milks, bread and eggs. Got the milk. "
+    "Remove the eggs. What's on my list?"
+)
 PIPER_VOICE = os.environ.get("KIKI_PIPER_VOICE", "en_US-lessac-medium")
 
 
@@ -200,7 +207,9 @@ def processors(conn, model=None) -> list[FrameProcessor]:
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS))
         ),
         WhisperSTTService(
-            settings=WhisperSTTService.Settings(model=WHISPER_MODEL),
+            settings=WhisperSTTService.Settings(
+                model=WHISPER_MODEL, initial_prompt=WHISPER_PROMPT
+            ),
             device="cpu",
             compute_type="int8",
         ),
@@ -222,6 +231,9 @@ async def run() -> None:
             audio_in_sample_rate=SAMPLE_RATE,
         )
     )
+    load_model(
+        model_name()
+    )  # pay the client start-up cost now, not on the first command
     pipeline = Pipeline([transport.input(), *processors(connect()), transport.output()])
     worker = PipelineWorker(
         pipeline,
