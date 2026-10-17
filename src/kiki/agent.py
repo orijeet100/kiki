@@ -5,11 +5,11 @@ calls `update_list` with every change plus the spoken reply, or answers in plain
 The model is a "provider:name" string from KIKI_MODEL, so swapping providers is an env change.
 """
 
-import functools
 import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -88,7 +88,7 @@ def update_list(
     """Make every list change the user asked for, in one call, and give the spoken reply.
 
     Args:
-        reply: What to say back: one or two short sentences, written from the current list.
+        reply: What to say back: one short sentence (two at most), written from the current list.
         add: Items to add. Items already on the list stay unchanged; say so in the reply.
         remove: Items to delete completely, whatever their quantity.
         set_quantities: New quantities for items already on the list, only when asked explicitly.
@@ -131,6 +131,8 @@ def spoken_style(output: str) -> str:
         raise ModelRetry(
             "Spoken reply: no markdown or bullets, write numbers as words."
         )
+    if len(re.findall(r"[.!?](?:\s|$)", output)) > 2:
+        raise ModelRetry("Too long to say aloud: one or two short sentences.")
     return output
 
 
@@ -138,10 +140,19 @@ def model_name() -> str:
     return os.environ.get("KIKI_MODEL", DEFAULT_MODEL)
 
 
-@functools.cache
-def load_model(name: str) -> Model:
-    """Build the model client once per process; the first build costs seconds (v0.3)."""
-    return infer_model(name)
+def warm_up() -> None:
+    """Pay the one-time model start-up cost (imports, TLS setup, about 3 s) before the first command.
+
+    The client itself is built per turn: a cached client keeps connections tied to the event
+    loop of the thread that first used it, and a turn on another thread then stalls until the
+    request timeout (measured: 11 s per turn). A fresh client costs about 40 ms.
+    """
+    infer_model(model_name())
+
+
+# ponytail: one turn at a time for the whole process. Voice and the UI's text box share one
+# SQLite connection, and a household never needs two commands in parallel.
+_turn_lock = threading.Lock()
 
 
 def run_turn(
@@ -150,10 +161,15 @@ def run_turn(
     model: Model | str | None = None,
     source: str = "text",
 ) -> dict:
+    with _turn_lock:
+        return _run_turn(command, conn, model, source)
+
+
+def _run_turn(command: str, conn: sqlite3.Connection, model, source: str) -> dict:
     start = time.perf_counter()
     now = datetime.now(UTC)
     name = model.model_name if isinstance(model, Model) else (model or model_name())
-    model = model if isinstance(model, Model) else load_model(name)
+    model = model if isinstance(model, Model) else infer_model(name)
     deps = Deps(conn, _snapshot(conn))
     turn = {
         "type": "turn",

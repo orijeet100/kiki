@@ -6,7 +6,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 
 | Version | Status | Summary |
 |---|---|---|
-| v0 | **Active** | Grocery list by voice on the laptop, plus a UI to watch it work |
+| v0 | **Shipped** (2026-10-17) | Grocery list by voice on the laptop, plus a UI to watch it work |
 | v1 | TBD | Not decided yet, see [Ideas](#ideas-not-scheduled) |
 
 ---
@@ -22,7 +22,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.1 | **Done** (2026-10-17) | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
 | v0.2 | **Done** (2026-10-17) | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
 | v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
-| v0.4 | Next | **UI.** Orb, list and run history driven by Kiki's own events. Starts only after [DESIGN.md](DESIGN.md) is written. |
+| v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [DESIGN.md](DESIGN.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
 
 ### Functional requirements
 

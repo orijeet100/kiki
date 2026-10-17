@@ -136,6 +136,38 @@ class FakeSpeaker(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+def states_during(frames) -> list[str]:
+    """State events the gate publishes while these frames go through it."""
+    from kiki import events
+
+    subscription = events.subscribe()
+    try:
+        downstream(frames)
+        seen = []
+        while not subscription.empty():
+            event = subscription.get()
+            if event["type"] == "state":
+                seen.append(event["value"])
+        return seen
+    finally:
+        events.unsubscribe(subscription)
+
+
+def test_fr_0_13_gate_publishes_listening_then_thinking():
+    frames = [
+        *WAKE,
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),
+    ]
+    assert states_during(frames) == ["listening", "thinking"]
+
+
+def test_fr_0_13_gate_goes_back_to_idle_if_nothing_is_said(monkeypatch):
+    monkeypatch.setattr(voice, "LISTEN_TIMEOUT_SECS", -1)
+    assert states_during(WAKE + silence(0.2)) == ["listening", "idle"]
+
+
 # --- real models on synthesized speech -------------------------------------------------
 
 
