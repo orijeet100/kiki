@@ -67,6 +67,8 @@ PIPER_VOICE = os.environ.get("KIKI_PIPER_VOICE", "en_US-lessac-medium")
 
 
 CHIME_RATE = 48000  # rendered at full quality; the speaker output resamples as needed
+# Peak level, 0 to 1. 0.32 went unnoticed and 0.7 was too loud on the laptop speakers.
+CHIME_VOLUME = float(os.environ.get("KIKI_CHIME_VOLUME", "0.45"))
 
 
 def chime(notes: list[tuple[float, float, float]]) -> bytes:
@@ -96,7 +98,7 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
         out[i:] += gain * tone * rise * np.exp(-t / (decay * 3))
     fade = int(CHIME_RATE * 0.01)
     out[-fade:] *= np.linspace(1, 0, fade)  # end exactly at silence: no click
-    out *= 0.7 / np.max(np.abs(out))  # about -3 dBFS: -10 dBFS was too quiet to notice
+    out *= CHIME_VOLUME / np.max(np.abs(out))
     return (out * 32767).astype("<i2").tobytes()
 
 

@@ -5,6 +5,9 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Changed
+- Listening chime at -7 dBFS (peak 0.45) instead of -3: louder than the first glass chime, which went unnoticed, but no longer jarring. `KIKI_CHIME_VOLUME` sets it.
+
+### Changed
 - Wake threshold 0.4 instead of 0.5. With a real voice, "hey jarvis" scored 0.46 and only crossed 0.5 about 0.3 s later, so the chime came late. Background speech has scored at most 0.24 so far; the near-miss log shows if 0.4 lets false wakes through.
 
 ### Added

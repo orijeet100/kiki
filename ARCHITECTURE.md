@@ -110,7 +110,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
-Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -3 dBFS (at -10 dBFS it was too quiet to notice). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
+Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -7 dBFS by default (`KIKI_CHIME_VOLUME`; -10 dBFS went unnoticed, -3 dBFS was too loud). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
 
 **Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.26 s after the last word for a finished-sounding sentence. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
@@ -246,6 +246,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
+| `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
 
