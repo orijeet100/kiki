@@ -55,7 +55,6 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 class Deps:
     conn: sqlite3.Connection
     list_at_start: str
-    previous_command: str | None = None
     tool_calls: list[dict] = field(default_factory=list)
 
 
@@ -124,18 +123,6 @@ def current_list(ctx: RunContext[Deps]) -> str:
     return f"Current list at the start of this request: {ctx.deps.list_at_start}"
 
 
-@agent.instructions
-def previous_command(ctx: RunContext[Deps]) -> str:
-    # Only set for a follow-up said within seconds of the last reply (ADR 0022).
-    if not ctx.deps.previous_command:
-        return ""
-    return (
-        f'The user said this a few seconds ago, and it is already done: "{ctx.deps.previous_command}". '
-        'This request may continue it: "and eggs" after "add chicken" means add eggs. '
-        "Never repeat the earlier changes."
-    )
-
-
 @agent.output_validator
 def spoken_style(output: str) -> str:
     """FR-0.10 guard: a reply must be speakable. (Empty replies are retried by Pydantic AI itself.)"""
@@ -173,32 +160,23 @@ def run_turn(
     conn: sqlite3.Connection,
     model: Model | str | None = None,
     source: str = "text",
-    previous_command: str | None = None,
 ) -> dict:
-    """`previous_command`: the command just before, when this one is a follow-up (ADR 0022)."""
     with _turn_lock:
-        return _run_turn(command, conn, model, source, previous_command)
+        return _run_turn(command, conn, model, source)
 
 
-def _run_turn(
-    command: str,
-    conn: sqlite3.Connection,
-    model,
-    source: str,
-    previous_command: str | None,
-) -> dict:
+def _run_turn(command: str, conn: sqlite3.Connection, model, source: str) -> dict:
     start = time.perf_counter()
     now = datetime.now(UTC)
     name = model.model_name if isinstance(model, Model) else (model or model_name())
     model = model if isinstance(model, Model) else infer_model(name)
-    deps = Deps(conn, _snapshot(conn), previous_command)
+    deps = Deps(conn, _snapshot(conn))
     turn = {
         "type": "turn",
         "id": f"t_{now:%Y%m%dT%H%M%S}_{secrets.token_hex(2)}",
         "ts": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "source": source,
         "heard": command,
-        "previous_command": previous_command,
         "tool_calls": deps.tool_calls,
         "said": "",
         "model": name,

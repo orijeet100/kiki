@@ -4,19 +4,8 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [v0.6] - 2026-10-17
-
-Follow-up window, from daily use: "I want to add chicken." [pause] "and eggs" lost the eggs.
-
-### Added
-- After each spoken reply Kiki listens for 5 s without the wake word (FR-0.16, ADR 0022), starting 0.3 s after playback to skip its own echo, with no chime. A command in the window goes to the agent with the previous command as context, so "and eggs" adds eggs. The run card shows "follow-up".
-- `previous_command` in the turn event; `KIKI_FOLLOW_UP_SECS` and `KIKI_END_GRACE_SECS` knobs.
-- Tests: gate follow-up behavior, the Brain passing context, scenario 13, and end to end by voice: "Hey Jarvis. I want to add chicken." … reply … "And eggs." leaves chicken and eggs on the list.
-
-### Changed
-- After a pause sounds finished, Kiki waits 0.4 s more before closing (ADR 0023). Without it, the comma in "Add milk, two apples and some rice" ended the command after "milk".
-- Voice tests now feed audio at real-time pace (`RealTimeMic`). Pushed all at once, Smart Turn judged the wrong audio, which had hidden the comma problem.
-- NFR-0.1 now names the follow-up window as the one time speech is transcribed without the wake word.
+### Reverted
+- v0.6 (the 5-second follow-up window and the end-of-command grace period) is rolled back to v0.5 behavior. With a movie playing, the follow-up window took the dialogue as commands, and each answer opened a new window, so Kiki kept listening and answering. Kiki again listens only after "hey jarvis". The v0.6 work stays in git (tag `v0.6`) and the mic watchdog is parked on the `v0-listening-state-fix` branch.
 
 ## [v0.5] - 2026-10-17
 

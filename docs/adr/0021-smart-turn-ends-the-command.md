@@ -1,6 +1,6 @@
 # 0021. Smart Turn decides when a spoken command is finished
 
-- Status: Accepted; when the command ends is amended by 0023
+- Status: Accepted
 - Date: 2026-10-17
 - Related: FR-0.14, FR-0.11, NFR-0.3. Supersedes the "close at the end of the first utterance" rule in 0016.
 
