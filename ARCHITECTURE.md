@@ -12,7 +12,7 @@ v0.1 (terminal)
                                └──> events.py ──> logs/turns.jsonl
 
 v0.2 (voice: voice.py, a Pipecat pipeline around the same agent)
-  mic ──> WakeGate ──> VADProcessor ──> WhisperSTTService ──> Brain ──> PiperTTSService ──> speaker
+  mic ──> WakeGate ──> VADProcessor ──> EndOfTurnDetector ──> WhisperSTTService ──> Brain ──> PiperTTSService ──> speaker
           (openWakeWord, (Silero)       (faster-whisper,      (run_turn) (Piper, local)
            local)                        local)
 
@@ -103,15 +103,16 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 | Processor | Job |
 |---|---|
-| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when VAD reports the end of speech (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
-| `VADProcessor` | Silero VAD. Emits started/stopped-speaking frames; `stop_secs` (`KIKI_VAD_STOP_SECS`, default 0.8) is the silence that ends a command. |
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
+| `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished, or `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are 16 kHz sine tones generated in code: rising (660 → 990 Hz) when listening starts, falling when it stops (FR-0.11).
 
-**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when VAD fires, `KIKI_VAD_STOP_SECS` after you stop talking. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
+**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.26 s after the last word for a finished-sounding sentence. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
 Measured on this laptop (v0.3, synthesized speech, CPU only):
 
@@ -143,6 +144,8 @@ The page shows an orb whose look follows `state`, the list (rows that changed fl
 - Rejects requests whose `Host` isn't `127.0.0.1` or `localhost` (blocks DNS rebinding).
 - `POST /command` requires `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
 - Commands are 1 to 200 characters.
+
+**One Kiki at a time (FR-0.15):** the voice loop and `kiki.ui` bind the UI port first. On Windows the server doesn't set `SO_REUSEADDR` (which there would let a second process share the port), so a second copy fails with "Kiki is already running" before loading any models. Two copies used to both answer every command.
 
 ## Matching names
 
@@ -240,7 +243,8 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
 | `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
-| `KIKI_VAD_STOP_SECS` | `0.8` | Silence that ends a command |
+| `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
+| `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |

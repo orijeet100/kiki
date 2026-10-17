@@ -1,4 +1,4 @@
-"""Voice loop (v0.2): mic -> wake gate -> VAD -> Whisper -> agent -> Piper -> speaker.
+"""Voice loop: mic -> wake gate -> VAD -> end of turn -> Whisper -> agent -> Piper -> speaker.
 
 Nothing reaches VAD or speech-to-text until "hey jarvis" is heard (NFR-0.1, ADR 0003).
 One wake word = one command (ADR 0009).
@@ -12,6 +12,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from pipecat.audio.turn.base_turn_analyzer import BaseTurnAnalyzer, EndOfTurnState
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -22,6 +25,7 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -41,8 +45,10 @@ WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
 WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
 WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
-# Silence that ends a command. Pipecat's default (0.2 s) cuts people off mid-sentence.
-VAD_STOP_SECS = float(os.environ.get("KIKI_VAD_STOP_SECS", "0.8"))
+# A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
+PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
+# Silence that ends a command even if it sounded unfinished (someone stopped mid-sentence).
+MAX_PAUSE_SECS = float(os.environ.get("KIKI_MAX_PAUSE_SECS", "3"))
 # base.en takes 0.5 s per command vs 1.6 s for small.en; small.en is the fallback if it mishears.
 WHISPER_MODEL = os.environ.get("KIKI_WHISPER_MODEL", "base.en")
 # Primes Whisper with list vocabulary and spoken quantities. Without it base.en hears "braid",
@@ -80,9 +86,10 @@ def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
 
 
 class WakeGate(FrameProcessor):
-    """Drops mic audio until the wake word; then lets one utterance through (FR-0.11, NFR-0.1).
+    """Drops mic audio until the wake word; then lets one command through (FR-0.11, NFR-0.1).
 
-    Saying the wake word while Kiki speaks interrupts the speech (FR-0.12).
+    The command ends when EndOfTurnDetector says so (UserStoppedSpeakingFrame), not at the
+    first pause. Saying the wake word while Kiki speaks interrupts the speech (FR-0.12).
     """
 
     def __init__(self, detect: Callable[[np.ndarray], float] | None = None, **kwargs):
@@ -112,7 +119,7 @@ class WakeGate(FrameProcessor):
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
             self._heard_speech = True
-        elif isinstance(frame, VADUserStoppedSpeakingFrame) and self._listening:
+        elif isinstance(frame, UserStoppedSpeakingFrame) and self._listening:
             await self._stop_listening()  # one command per wake word
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
@@ -153,6 +160,64 @@ class WakeGate(FrameProcessor):
         await self.push_frame(
             OutputAudioRawFrame(audio=pcm, sample_rate=SAMPLE_RATE, num_channels=1)
         )
+
+
+class EndOfTurnDetector(FrameProcessor):
+    """Ends a spoken command when it sounds finished, not at the first pause (ADR 0021).
+
+    VAD reports every pause longer than PAUSE_SECS. At each one, Smart Turn (a small local
+    model that listens to intonation) judges whether the sentence is finished. Pauses that
+    aren't the end are hidden from Whisper, so it transcribes the whole command once. After
+    MAX_PAUSE_SECS of silence the command ends anyway.
+    """
+
+    def __init__(self, analyzer: BaseTurnAnalyzer | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self._analyzer = analyzer or LocalSmartTurnAnalyzerV3(
+            params=SmartTurnParams(stop_secs=MAX_PAUSE_SECS)
+        )
+        self._analyzer.set_sample_rate(SAMPLE_RATE)
+        self._in_command = False
+        self._speaking = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.UPSTREAM:
+            return await self.push_frame(frame, direction)
+
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            self._speaking = True
+            self._analyzer.update_vad_start_secs(frame.start_secs)
+            if self._in_command:
+                return  # speech resumed after a pause: still the same command
+            self._in_command = True
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self._speaking = False
+            if self._in_command:
+                state, _ = await self._analyzer.analyze_end_of_turn()
+                if state == EndOfTurnState.COMPLETE:
+                    await self._end_command()
+            return  # a pause; Whisper only hears about the end of the command
+        elif isinstance(frame, InputAudioRawFrame):
+            silence_ran_out = (
+                self._analyzer.append_audio(frame.audio, self._speaking)
+                == EndOfTurnState.COMPLETE
+            )
+            await self.push_frame(frame, direction)
+            if silence_ran_out and self._in_command:
+                await self._end_command()
+            return
+        await self.push_frame(frame, direction)
+
+    async def _end_command(self):
+        self._in_command = False
+        self._analyzer.clear()
+        await self.push_frame(
+            VADUserStoppedSpeakingFrame(stop_secs=PAUSE_SECS)
+        )  # to Whisper
+        await self.push_frame(
+            UserStoppedSpeakingFrame(), FrameDirection.UPSTREAM
+        )  # to the gate
 
 
 class Brain(FrameProcessor):
@@ -213,8 +278,9 @@ def processors(conn, model=None) -> list[FrameProcessor]:
     return [
         WakeGate(),
         VADProcessor(
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=VAD_STOP_SECS))
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=PAUSE_SECS))
         ),
+        EndOfTurnDetector(),
         WhisperSTTService(
             settings=WhisperSTTService.Settings(
                 model=WHISPER_MODEL, initial_prompt=WHISPER_PROMPT
@@ -233,6 +299,12 @@ async def run() -> None:
         LocalAudioTransportParams,
     )
 
+    conn = connect()
+    try:
+        server = ui.serve(conn)  # first: fails fast if Kiki is already running
+    except ui.AlreadyRunning as e:
+        sys.exit(str(e))
+    warm_up()
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
@@ -240,9 +312,6 @@ async def run() -> None:
             audio_in_sample_rate=SAMPLE_RATE,
         )
     )
-    warm_up()
-    conn = connect()
-    server = ui.serve(conn)
     pipeline = Pipeline([transport.input(), *processors(conn), transport.output()])
     worker = PipelineWorker(
         pipeline,

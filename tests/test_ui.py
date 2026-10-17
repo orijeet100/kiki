@@ -106,3 +106,8 @@ def test_nfr_0_6_rejects_commands_that_are_not_json(server):
 @pytest.mark.parametrize("text", ["", "   ", "x" * (ui.MAX_COMMAND_CHARS + 1)])
 def test_nfr_0_6_rejects_empty_or_oversized_commands(server, text):
     assert post_command(server, text).status == 400
+
+
+def test_fr_0_15_a_second_kiki_cannot_start_on_the_same_port(server, tmp_path):
+    with pytest.raises(ui.AlreadyRunning):
+        ui.serve(connect(str(tmp_path / "other.db")), port=server.server_address[1])

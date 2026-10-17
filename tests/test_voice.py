@@ -12,6 +12,7 @@ import wave
 
 import numpy as np
 import pytest
+from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     InputAudioRawFrame,
@@ -20,6 +21,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStoppedFrame,
+    UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
@@ -84,7 +86,9 @@ def test_fr_0_11_end_of_speech_closes_gate_with_chime():
         *WAKE,
         VADUserStartedSpeakingFrame(),
         *silence(0.1),
-        VADUserStoppedSpeakingFrame(),
+        VADUserStoppedSpeakingFrame(),  # a pause: the gate stays open
+        *silence(0.1),
+        UserStoppedSpeakingFrame(),  # the end of the command
         *silence(0.5),
     ]
     down, _ = asyncio.run(run_test(gate, frames_to_send=frames))
@@ -158,7 +162,7 @@ def test_fr_0_13_gate_publishes_listening_then_thinking():
         *WAKE,
         VADUserStartedSpeakingFrame(),
         *silence(0.1),
-        VADUserStoppedSpeakingFrame(),
+        UserStoppedSpeakingFrame(),
     ]
     assert states_during(frames) == ["listening", "thinking"]
 
@@ -166,6 +170,95 @@ def test_fr_0_13_gate_publishes_listening_then_thinking():
 def test_fr_0_13_gate_goes_back_to_idle_if_nothing_is_said(monkeypatch):
     monkeypatch.setattr(voice, "LISTEN_TIMEOUT_SECS", -1)
     assert states_during(WAKE + silence(0.2)) == ["listening", "idle"]
+
+
+def test_fr_0_14_a_pause_alone_does_not_close_the_gate():
+    frames = [
+        *WAKE,
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),
+    ]
+    assert chimes(downstream(frames)) == [voice.LISTENING_CHIME]
+
+
+class ScriptedTurnAnalyzer:
+    """Stands in for Smart Turn: answers each pause from a script; silence never runs out."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.silence_ran_out = False
+
+    def set_sample_rate(self, rate):
+        pass
+
+    def update_vad_start_secs(self, secs):
+        pass
+
+    def append_audio(self, buffer, is_speech):
+        return (
+            EndOfTurnState.COMPLETE
+            if self.silence_ran_out
+            else EndOfTurnState.INCOMPLETE
+        )
+
+    async def analyze_end_of_turn(self):
+        return self.answers.pop(0), None
+
+    def clear(self):
+        pass
+
+
+def detector_output(analyzer, frames):
+    detector = voice.EndOfTurnDetector(analyzer=analyzer)
+    return asyncio.run(run_test(detector, frames_to_send=frames))
+
+
+def test_fr_0_14_mid_sentence_pause_is_hidden_from_speech_to_text():
+    analyzer = ScriptedTurnAnalyzer(EndOfTurnState.INCOMPLETE, EndOfTurnState.COMPLETE)
+    frames = [
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),  # "can you add one ..." sounds unfinished
+        *silence(0.1),
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),  # "... garlic and one onion" sounds finished
+    ]
+    down, up = detector_output(analyzer, frames)
+    starts = [f for f in down if isinstance(f, VADUserStartedSpeakingFrame)]
+    stops = [f for f in down if isinstance(f, VADUserStoppedSpeakingFrame)]
+    assert len(starts) == 1 and len(stops) == 1  # Whisper hears one command
+    assert down.index(stops[0]) == len(down) - 1  # ...ending after all the audio
+    assert [f for f in up if isinstance(f, UserStoppedSpeakingFrame)]  # the gate closes
+
+
+def test_fr_0_14_a_finished_sentence_ends_at_the_first_pause():
+    frames = [
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),
+    ]
+    down, up = detector_output(ScriptedTurnAnalyzer(EndOfTurnState.COMPLETE), frames)
+    assert sum(isinstance(f, VADUserStoppedSpeakingFrame) for f in down) == 1
+    assert sum(isinstance(f, UserStoppedSpeakingFrame) for f in up) == 1
+
+
+def test_fr_0_14_long_silence_ends_an_unfinished_sentence():
+    analyzer = ScriptedTurnAnalyzer(EndOfTurnState.INCOMPLETE)
+    frames = [
+        VADUserStartedSpeakingFrame(),
+        *silence(0.1),
+        VADUserStoppedSpeakingFrame(),
+    ]
+    down, up = detector_output(analyzer, frames)
+    assert not any(
+        isinstance(f, VADUserStoppedSpeakingFrame) for f in down
+    )  # still waiting
+    analyzer.silence_ran_out = True
+    analyzer.answers = [EndOfTurnState.INCOMPLETE]
+    down, up = detector_output(analyzer, [*frames, *silence(0.1)])
+    assert sum(isinstance(f, UserStoppedSpeakingFrame) for f in up) == 1
 
 
 # --- real models on synthesized speech -------------------------------------------------
@@ -357,3 +450,37 @@ def test_nfr_0_3_median_end_of_speech_to_first_audio(tmp_path, speak, monkeypatc
     medians = report(str(log))
     assert len(log.read_text(encoding="utf-8").splitlines()) == 20
     assert medians["total"] <= 2000, medians
+
+
+def cut_at_word(speak, sentence: str, words: int) -> tuple[np.ndarray, np.ndarray]:
+    """Split Piper's reading of `sentence` after `words` words, keeping mid-sentence intonation."""
+    from faster_whisper import WhisperModel
+
+    audio = speak(sentence)
+    whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
+    segments, _ = whisper.transcribe(
+        audio.astype(np.float32) / 32768, language="en", word_timestamps=True
+    )
+    cut = int([w for seg in segments for w in seg.words][words - 1].end * 16000)
+    return audio[:cut], audio[cut:]
+
+
+@pytest.mark.voice
+def test_fr_0_14_end_to_end_a_pause_mid_sentence_keeps_listening(
+    tmp_path, speak, monkeypatch
+):
+    """ "Hey Jarvis. Can you add one ... (1.2 s) ... garlic and one onion?" is one command."""
+    monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
+    first, rest = cut_at_word(speak, "Can you add one garlic and one onion?", 4)
+    audio = [
+        *silence(0.5),
+        *mic(speak("Hey Jarvis.")),
+        *silence(0.3),
+        *mic(first),
+        *silence(1.2),
+        *mic(rest),
+        *silence(3.5),
+    ]
+    _, heard, _ = run_voice(tmp_path, audio)
+    assert len(heard) == 1, heard
+    assert "garlic" in heard[0].lower() and "onion" in heard[0].lower(), heard

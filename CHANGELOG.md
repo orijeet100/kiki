@@ -4,6 +4,20 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.5] - 2026-10-17
+
+Natural pauses, from the first days of real use.
+
+### Changed
+- A pause mid-sentence no longer ends the command (FR-0.14). VAD now reports every 0.2 s pause, and a new `EndOfTurnDetector` asks Pipecat's bundled Smart Turn model whether the sentence sounds finished. Unfinished pauses are hidden from Whisper; the command ends when it sounds finished or after 3 s of silence (ADR 0021). A finished sentence is now recognized about 0.26 s after the last word instead of 0.8 s.
+- Knobs: `KIKI_PAUSE_SECS` (0.2) and `KIKI_MAX_PAUSE_SECS` (3) replace `KIKI_VAD_STOP_SECS`.
+
+### Fixed
+- Two copies of Kiki could run at once on Windows and both answer every command (seen in the log as duplicate turns). A second copy now exits with "Kiki is already running" (FR-0.15).
+
+### Added
+- Tests: end-of-turn detector with a scripted analyzer; end to end, "Hey Jarvis. Can you add one … (1.2 s pause) … garlic and one onion?" is heard as one command; second instance refused.
+
 ## [v0] - 2026-10-17
 
 v0 is done: one household grocery list, edited and read back by voice on the laptop, with a local UI to watch it work. Steps v0.1 to v0.4 below. Still for the owner: a week of daily use to tune wake sensitivity and pauses (v0.3), and the real UI design in DESIGN.md (v0.4 shipped a first cut).
