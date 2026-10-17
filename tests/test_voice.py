@@ -487,11 +487,13 @@ def test_fr_0_14_end_to_end_a_pause_mid_sentence_keeps_listening(
     assert "garlic" in heard[0].lower() and "onion" in heard[0].lower(), heard
 
 
-def test_fr_0_11_listening_chime_is_soft_and_click_free():
+def test_fr_0_11_listening_chime_is_audible_and_click_free():
     samples = np.frombuffer(voice.LISTENING_CHIME, np.int16)
     assert samples[0] == 0 and samples[-1] == 0  # starts and ends in silence
-    assert 0.3 < len(samples) / voice.CHIME_RATE < 1.0  # short, with a ring-out
-    assert np.abs(samples).max() < 0.4 * 32768  # well below full scale
+    assert 0.3 < len(samples) / voice.CHIME_RATE < 1.5  # short, with a ring-out
+    assert (
+        0.5 * 32768 < np.abs(samples).max() < 0.8 * 32768
+    )  # loud enough, never clipping
 
 
 def test_fr_0_11_wake_scores_are_logged_and_the_fading_tail_is_not_a_near_miss():

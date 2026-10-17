@@ -75,7 +75,11 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
     owner from three styles (glass, marimba, bell).
     """
     partials = [(1, 1.0), (2, 0.22), (3, 0.06)]  # (frequency ratio, amplitude)
-    decay, attack, tail = 0.18, 0.006, 0.6
+    decay, attack, tail = (
+        0.3,
+        0.006,
+        1.1,
+    )  # rings long enough to notice across a kitchen
     out = np.zeros(int(CHIME_RATE * (max(start for _, start, _ in notes) + tail)))
     for freq, start, gain in notes:
         i = int(CHIME_RATE * start)
@@ -90,7 +94,7 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
         out[i:] += gain * tone * rise * np.exp(-t / (decay * 3))
     fade = int(CHIME_RATE * 0.01)
     out[-fade:] *= np.linspace(1, 0, fade)  # end exactly at silence: no click
-    out *= 0.32 / np.max(np.abs(out))  # about -10 dBFS: clear, not loud
+    out *= 0.7 / np.max(np.abs(out))  # about -3 dBFS: -10 dBFS was too quiet to notice
     return (out * 32767).astype("<i2").tobytes()
 
 
