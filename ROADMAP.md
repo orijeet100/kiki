@@ -19,8 +19,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 
 | Step | Status | What |
 |---|---|---|
-| v0.1 | Next | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
-| v0.2 | Planned | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
+| v0.1 | **Done** (2026-10-17) | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
+| v0.2 | Next | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
 | v0.3 | Planned | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
 | v0.4 | Planned | **UI.** Orb, list and run history driven by Kiki's own events. Starts only after [DESIGN.md](DESIGN.md) is written. |
 
@@ -71,7 +71,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 
 ### Definition of done
 
-- **v0.1:** every v0.1 requirement has a passing test. `uv run python -m kiki.cli` runs the terminal loop and writes the turn log.
+- **v0.1:** every v0.1 requirement has a passing test, including all 11 scenarios against the real API. `uv run --env-file .env python -m kiki.cli` runs the terminal loop and writes the turn log.
 - **v0.2:** scenarios 1, 2, 5, 6, 8, 10 and 11 work by voice with "hey jarvis". FR-0.11, FR-0.12, NFR-0.1 and NFR-0.2 verified.
 - **v0.3:** NFR-0.3 met. False wakes and premature cut-offs are rare enough for a week of daily use.
 - **v0.4:** FR-0.13 and NFR-0.6 met.

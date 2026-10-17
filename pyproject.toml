@@ -1,0 +1,23 @@
+[project]
+name = "kiki"
+version = "0.1.0"
+description = "Kitchen voice assistant: a household grocery list by voice"
+authors = [
+    { name = "Orijeet", email = "orijeetmukherjee.im@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-ai-slim[anthropic]>=2.57.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+markers = ["scenario: calls the real Claude API (needs ANTHROPIC_API_KEY, costs a little)"]

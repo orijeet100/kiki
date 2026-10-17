@@ -46,9 +46,9 @@ ADR 0009 ──referenced by──> commit "tools: ... (FR-0.2, ADR-0009)"
 ## Commands
 
 ```bash
-uv sync                               # install
-uv run pytest -m "not scenario"       # fast tests, no API calls
-uv run pytest                         # all tests, needs ANTHROPIC_API_KEY
-uvx ruff check . && uvx ruff format . # lint and format
-uv run python -m kiki.cli             # terminal loop (v0.1)
+uv sync                                       # install
+uv run pytest -m "not scenario"               # fast tests, no API calls
+uv run --env-file .env pytest                 # all tests, scenarios need ANTHROPIC_API_KEY in .env
+uvx ruff check . && uvx ruff format .         # lint and format
+uv run --env-file .env python -m kiki.cli     # terminal loop (v0.1)
 ```

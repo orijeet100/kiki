@@ -40,3 +40,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0012](0012-clear-list-without-confirmation.md) | Clear the list without confirmation | Accepted |
 | [0013](0013-tooling-uv-pytest-ruff.md) | Tooling: uv, pytest, ruff | Accepted |
 | [0014](0014-reject-list-export-to-phone.md) | Don't export or sync the list to phones | Rejected |
+| [0015](0015-use-pydantic-ai-for-the-agent.md) | Use Pydantic AI for the agent | Accepted |
