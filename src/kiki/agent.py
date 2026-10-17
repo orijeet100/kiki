@@ -1,9 +1,11 @@
 """One command in, one `turn` event out, via Pydantic AI (ADR 0015).
 
-Single-turn: no history (ADR 0009). The model is a "provider:name" string from KIKI_MODEL,
-so swapping providers is an env change.
+Single-turn: no history (ADR 0009). One model request per command (ADR 0018): the model either
+calls `update_list` with every change plus the spoken reply, or answers in plain text.
+The model is a "provider:name" string from KIKI_MODEL, so swapping providers is an env change.
 """
 
+import functools
 import os
 import re
 import secrets
@@ -11,19 +13,17 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Annotated
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.exceptions import (
     AgentRunError,
     ModelAPIError,
     ModelHTTPError,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
 
 from kiki import tools
 
@@ -34,15 +34,18 @@ INSTRUCTIONS = """You manage a household grocery list by voice. Replies are spok
 short sentences, no markdown, bullets or emojis, numbers written as words ("two milks").
 
 Rules:
-- Use the tools for every change. Each request is independent; you only know the current list.
+- To change the list, call update_list once with every change from the sentence and the spoken \
+reply. Each request is independent; you only know the current list below.
+- Questions about the list are answered in plain text from the current list, with no call.
 - Fix obvious speech-to-text slips ("bred" means bread). Use plain item names ("rice", not "some rice").
+- "Got the X" means it was bought: remove it. Speech-to-text often hears it as "cut", "dot" or "gut".
 - If an item is already on the list, say so and don't change it. Only change a quantity when the \
 user explicitly asks ("add another milk", "make it three milks"); compute the new number from the \
-list and call set_quantity.
+list and put it in set_quantities.
 - Removing an item deletes it completely, whatever its quantity.
 - When asked what's on the list, read every item.
 - After clearing the list, say only how many items were removed ("Cleared five items.").
-- If you can't tell what the user wants, reply exactly "Sorry, I didn't catch that." and call no tools."""
+- If you can't tell what the user wants, reply exactly "Sorry, I didn't catch that." in plain text."""
 
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -60,22 +63,6 @@ class Item(BaseModel):
     quantity: int = Field(default=1, ge=1)
 
 
-agent = Agent(
-    deps_type=Deps,
-    instructions=INSTRUCTIONS,
-    model_settings=ModelSettings(thinking="low", max_tokens=4096),
-    retries=2,
-)
-
-
-@agent.instructions
-def current_list(ctx: RunContext[Deps]) -> str:
-    # Pydantic AI re-renders instructions on every model request, so this must be the snapshot
-    # from the start of the turn. A live read would show "bread x2" after the first set_quantity
-    # and "add another bread" would bump it again.
-    return f"Current list at the start of this request: {ctx.deps.list_at_start}"
-
-
 def _snapshot(conn: sqlite3.Connection) -> str:
     items = tools.read_list(conn)["items"]
     return ", ".join(f"{i['name']} x{i['quantity']}" for i in items) or "(empty)"
@@ -90,36 +77,50 @@ def _call(ctx: RunContext[Deps], tool: str, /, **args) -> dict:
     return result
 
 
-@agent.tool
-def add_items(ctx: RunContext[Deps], items: list[Item]) -> dict:
-    """Add one or more items. Items already on the list are left unchanged and returned in already_present."""
-    return _call(ctx, "add_items", items=[i.model_dump() for i in items])
+def update_list(
+    ctx: RunContext[Deps],
+    reply: str,
+    add: list[Item] | None = None,
+    remove: list[str] | None = None,
+    set_quantities: list[Item] | None = None,
+    clear: bool = False,
+) -> str:
+    """Make every list change the user asked for, in one call, and give the spoken reply.
+
+    Args:
+        reply: What to say back: one or two short sentences, written from the current list.
+        add: Items to add. Items already on the list stay unchanged; say so in the reply.
+        remove: Items to delete completely, whatever their quantity.
+        set_quantities: New quantities for items already on the list, only when asked explicitly.
+        clear: True to remove every item.
+    """
+    # Every step is idempotent, so a retry after ModelRetry can safely re-apply them.
+    if clear:
+        _call(ctx, "clear_list")
+    if remove:
+        _call(ctx, "remove_items", names=remove)
+    if add:
+        _call(ctx, "add_items", items=[i.model_dump() for i in add])
+    for change in set_quantities or []:
+        _call(ctx, "set_quantity", name=change.name, quantity=change.quantity)
+    return reply
 
 
-@agent.tool
-def set_quantity(
-    ctx: RunContext[Deps], name: str, quantity: Annotated[int, Field(ge=1)]
-) -> dict:
-    """Set the quantity of an item already on the list. Only for explicit requests like 'add another milk' or 'make it three milks'."""
-    return _call(ctx, "set_quantity", name=name, quantity=quantity)
+agent = Agent(
+    deps_type=Deps,
+    output_type=[ToolOutput(update_list, name="update_list"), str],
+    instructions=INSTRUCTIONS,
+    # timeout: a stalled request must fail in seconds, not the client's default ten minutes.
+    model_settings=ModelSettings(thinking="low", max_tokens=4096, timeout=10),
+    retries=2,
+)
 
 
-@agent.tool
-def remove_items(ctx: RunContext[Deps], names: list[str]) -> dict:
-    """Remove one or more items completely, whatever their quantity."""
-    return _call(ctx, "remove_items", names=names)
-
-
-@agent.tool
-def read_list(ctx: RunContext[Deps]) -> dict:
-    """Return every item on the list."""
-    return _call(ctx, "read_list")
-
-
-@agent.tool
-def clear_list(ctx: RunContext[Deps]) -> dict:
-    """Remove every item from the list immediately."""
-    return _call(ctx, "clear_list")
+@agent.instructions
+def current_list(ctx: RunContext[Deps]) -> str:
+    # Pydantic AI re-renders instructions on every model request (including retries), so this
+    # must be the snapshot from the start of the turn, not a live read.
+    return f"Current list at the start of this request: {ctx.deps.list_at_start}"
 
 
 @agent.output_validator
@@ -133,6 +134,16 @@ def spoken_style(output: str) -> str:
     return output
 
 
+def model_name() -> str:
+    return os.environ.get("KIKI_MODEL", DEFAULT_MODEL)
+
+
+@functools.cache
+def load_model(name: str) -> Model:
+    """Build the model client once per process; the first build costs seconds (v0.3)."""
+    return infer_model(name)
+
+
 def run_turn(
     command: str,
     conn: sqlite3.Connection,
@@ -141,7 +152,8 @@ def run_turn(
 ) -> dict:
     start = time.perf_counter()
     now = datetime.now(UTC)
-    model = model or os.environ.get("KIKI_MODEL", DEFAULT_MODEL)
+    name = model.model_name if isinstance(model, Model) else (model or model_name())
+    model = model if isinstance(model, Model) else load_model(name)
     deps = Deps(conn, _snapshot(conn))
     turn = {
         "type": "turn",
@@ -151,16 +163,13 @@ def run_turn(
         "heard": command,
         "tool_calls": deps.tool_calls,
         "said": "",
-        "model": model if isinstance(model, str) else model.model_name,
+        "model": name,
         "latency_ms": {"stt": None, "llm": 0, "tts": None, "total": 0},
         "error": None,
     }
 
     try:
-        result = agent.run_sync(
-            command, model=model, deps=deps, usage_limits=UsageLimits(request_limit=6)
-        )
-        turn["said"] = result.output
+        turn["said"] = agent.run_sync(command, model=model, deps=deps).output
     except ModelHTTPError as e:
         turn["said"] = "Something went wrong, please try again."
         turn["error"] = f"API error {e.status_code}"
@@ -172,7 +181,7 @@ def run_turn(
     ) as e:  # retries exhausted: no speakable reply (FR-0.8)
         turn["said"] = DIDNT_CATCH
         turn["error"] = f"{type(e).__name__}: {e}"
-    except AgentRunError as e:  # usage limit and anything else from the run
+    except AgentRunError as e:  # anything else from the run
         turn["said"] = "Something went wrong, please try again."
         turn["error"] = f"{type(e).__name__}: {e}"
 

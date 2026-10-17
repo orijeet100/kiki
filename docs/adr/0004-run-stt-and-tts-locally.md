@@ -1,6 +1,6 @@
 # 0004. Run STT and TTS locally (faster-whisper, Piper)
 
-- Status: Accepted
+- Status: Accepted; STT model superseded by 0019
 - Date: 2026-10-17
 - Related: NFR-0.2, NFR-0.3
 

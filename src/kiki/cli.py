@@ -2,13 +2,14 @@
 
 import json
 
-from kiki.agent import run_turn
+from kiki.agent import load_model, model_name, run_turn
 from kiki.db import connect
 from kiki.events import append_turn
 
 
 def main() -> None:
     conn = connect()
+    load_model(model_name())  # client start-up cost before the first command
     print("Kiki v0.1. Type a command, or 'quit'.")
     while True:
         try:

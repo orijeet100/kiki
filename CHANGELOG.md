@@ -4,6 +4,27 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.3] - 2026-10-17
+
+Tuned. Median end of speech to first audio went from about 3.0 s to about 1.5 s (NFR-0.3).
+
+### Changed
+- One model request per command: the agent calls a single `update_list(reply, add, remove, set_quantities, clear)` output function or answers in plain text (ADR 0018). `read_list` is no longer offered to the model.
+- Whisper `base.en` with a grocery-vocabulary prompt instead of `small.en`: 0.5 s instead of 1.6 s, same accuracy on the test commands (ADR 0019).
+- The model client is built once at startup (`load_model`), so the first command is no longer about 3 s slower.
+- Requests time out after 10 s instead of the client's default 10 minutes.
+- The agent treats "cut/dot/gut the X" as Whisper's mishearing of "got the X" (scenario 12).
+
+### Added
+- `python -m kiki.latency [n]`: median latency per stage over the last n voice turns.
+- Tests: NFR-0.3 latency test (20 spoken commands through the full chain, median must be 2 s or less), one-request and ordering tests for `update_list`, scenario 12.
+
+### Fixed
+- Parallel tool calls from one model response could hit the shared SQLite connection at the same time and crash. Gone by design: one `update_list` call per turn.
+
+### Known issues
+- The v0.3 definition of done also asks for a week of daily use with rare false wakes and cut-offs. That needs a person at the mic; `KIKI_WAKE_THRESHOLD`, `KIKI_VAD_STOP_SECS` and `KIKI_WHISPER_MODEL` are the knobs.
+
 ## [v0.2] - 2026-10-17
 
 Voice on the laptop. Say "hey jarvis", hear a chime, say a command, hear the reply.

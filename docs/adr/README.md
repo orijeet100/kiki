@@ -29,7 +29,7 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0001](0001-record-decisions-with-madr-lite.md) | Record decisions with MADR-lite ADRs | Accepted |
 | [0002](0002-use-pipecat-for-voice-orchestration.md) | Use Pipecat for voice orchestration | Accepted |
 | [0003](0003-gate-audio-with-local-wake-word.md) | Gate audio with a local wake word ("hey jarvis") before STT | Accepted |
-| [0004](0004-run-stt-and-tts-locally.md) | Run STT and TTS locally (faster-whisper, Piper) | Accepted |
+| [0004](0004-run-stt-and-tts-locally.md) | Run STT and TTS locally (faster-whisper, Piper) | Accepted; STT model superseded by 0019 |
 | [0005](0005-use-claude-haiku-by-default.md) | Use Claude Haiku by default | Accepted |
 | [0006](0006-store-state-in-sqlite.md) | Store state in SQLite | Accepted |
 | [0007](0007-laptop-is-the-permanent-host.md) | The laptop is the permanent host; devices are thin clients | Accepted |
@@ -43,3 +43,5 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0015](0015-use-pydantic-ai-for-the-agent.md) | Use Pydantic AI for the agent | Accepted |
 | [0016](0016-one-utterance-per-wake-word.md) | The wake gate lets through one utterance per wake word | Accepted |
 | [0017](0017-test-voice-with-synthesized-speech.md) | Test the voice loop with speech synthesized by Piper | Accepted |
+| [0018](0018-one-model-request-per-command.md) | One model request per command: the `update_list` output function | Accepted |
+| [0019](0019-whisper-base-with-vocabulary-prompt.md) | Whisper `base.en` with a grocery-vocabulary prompt | Accepted |

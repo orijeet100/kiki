@@ -21,8 +21,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 |---|---|---|
 | v0.1 | **Done** (2026-10-17) | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
 | v0.2 | **Done** (2026-10-17) | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
-| v0.3 | Next | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
-| v0.4 | Planned | **UI.** Orb, list and run history driven by Kiki's own events. Starts only after [DESIGN.md](DESIGN.md) is written. |
+| v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
+| v0.4 | Next | **UI.** Orb, list and run history driven by Kiki's own events. Starts only after [DESIGN.md](DESIGN.md) is written. |
 
 ### Functional requirements
 
@@ -68,6 +68,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | 9 | "What's on my list?" (empty) | "Your list is empty." | FR-0.6 |
 | 10 | "Clear the list" (5 items) | List empty, reply mentions five, log has the five items | FR-0.7, NFR-0.4 |
 | 11 | "Blorp the frim" | "Sorry, I didn't catch that.", list unchanged | FR-0.8 |
+| 12 | "Dot the eggs" (Whisper's mishearing of "got the eggs") | Eggs removed | FR-0.4 |
 
 ### Definition of done
 
