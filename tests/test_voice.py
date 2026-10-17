@@ -484,3 +484,12 @@ def test_fr_0_14_end_to_end_a_pause_mid_sentence_keeps_listening(
     _, heard, _ = run_voice(tmp_path, audio)
     assert len(heard) == 1, heard
     assert "garlic" in heard[0].lower() and "onion" in heard[0].lower(), heard
+
+
+def test_fr_0_11_chimes_are_distinct_soft_and_click_free():
+    for pcm in (voice.LISTENING_CHIME, voice.DONE_CHIME):
+        samples = np.frombuffer(pcm, np.int16)
+        assert samples[0] == 0 and samples[-1] == 0  # starts and ends in silence
+        assert 0.3 < len(samples) / voice.CHIME_RATE < 1.0  # short, with a ring-out
+        assert np.abs(samples).max() < 0.4 * 32768  # well below full scale
+    assert voice.LISTENING_CHIME != voice.DONE_CHIME

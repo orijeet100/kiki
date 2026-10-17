@@ -110,7 +110,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
-Chimes are 16 kHz sine tones generated in code: rising (660 → 990 Hz) when listening starts, falling when it stops (FR-0.11).
+Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 0.7 s and -10 dBFS. Listening starts with a rising fifth (C6 to G6); it stops with a falling pair (D6 to G5) (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
 
 **Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.26 s after the last word for a finished-sounding sentence. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
