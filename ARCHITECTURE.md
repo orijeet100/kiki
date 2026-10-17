@@ -61,7 +61,7 @@ tests/
 ## Request flow (one turn)
 
 1. A command arrives as text (typed in v0.1, transcribed in v0.2).
-2. `run_turn` snapshots the list once, then calls `agent.run_sync` with only the command. The model sees the static instructions, the snapshot and the command. No previous turns ([ADR 0009](docs/adr/0009-single-turn-commands.md)), with one exception: a spoken follow-up also gets the previous command as one line of context, marked as already done ([ADR 0022](docs/adr/0022-follow-up-window-after-each-reply.md)).
+2. `run_turn` snapshots the list once, then calls `agent.run_sync` with only the command. The model sees the static instructions, the snapshot and the command. No previous turns ([ADR 0009](docs/adr/0009-single-turn-commands.md)).
 3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, clear)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply.
 4. `run_turn` returns a `turn` event. `events.py` appends it to the log. The caller prints or speaks `said`.
 
@@ -103,16 +103,16 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 | Processor | Job |
 |---|---|
-| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. After each spoken reply it also opens, silently, for `KIKI_FOLLOW_UP_SECS` (5 s), starting 0.3 s after playback so the tail of Kiki's own voice isn't heard; an unused window closes silently (FR-0.16). It closes, with the done chime, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
-| `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished and still silent `KIKI_END_GRACE_SECS` (0.4 s) later, or after `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). Speech within the grace period, like the next item after a list comma, keeps the same command ([ADR 0023](docs/adr/0023-grace-period-after-a-finished-sounding-pause.md)). |
+| `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished, or `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
-| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, passing the previous command when this one started within the follow-up window, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
+| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are 16 kHz sine tones generated in code: rising (660 → 990 Hz) when listening starts, falling when it stops (FR-0.11).
 
-**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.66 s after the last word for a finished-sounding sentence (0.2 s pause, ~60 ms check, 0.4 s grace). `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
+**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.26 s after the last word for a finished-sounding sentence. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
 Measured on this laptop (v0.3, synthesized speech, CPU only):
 
@@ -189,7 +189,6 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
   "ts": "2026-10-17T18:02:11Z",
   "source": "text",
   "heard": "add bread and two milks",
-  "previous_command": null,
   "tool_calls": [
     {"name": "add_items",
      "args": {"items": [{"name": "bread", "quantity": 1}, {"name": "milk", "quantity": 2}]},
@@ -203,7 +202,6 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 }
 ```
 
-- `previous_command` is the command just before, when this one was a spoken follow-up (FR-0.16); otherwise null.
 - `source` is `text` or `voice`. `stt` and `tts` latencies are `null` in v0.1. `llm` is the whole agent run (model requests plus tool time), so in v0.1 it equals `total`.
 - `error` is null, or a short string when the turn failed (for example, no internet).
 
@@ -215,7 +213,7 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 
 | Value | Published by | When |
 |---|---|---|
-| `listening` | `WakeGate` | wake word heard, or a reply finished (follow-up window) |
+| `listening` | `WakeGate` | wake word heard |
 | `thinking` | `WakeGate`, `ui.send_command` | end of a command, before the agent answers |
 | `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word; reply finished |
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
@@ -246,9 +244,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
-| `KIKI_END_GRACE_SECS` | `0.4` | After a pause sounds finished, how long to wait for more words before closing |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
-| `KIKI_FOLLOW_UP_SECS` | `5` | How long Kiki listens after each reply without the wake word |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
@@ -273,7 +269,7 @@ The UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
-- `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once was judged wrong. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
+- `test_voice.py`: the gate tests use a fake detector and are instant. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
 - `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

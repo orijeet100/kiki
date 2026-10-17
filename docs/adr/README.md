@@ -34,7 +34,7 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0006](0006-store-state-in-sqlite.md) | Store state in SQLite | Accepted |
 | [0007](0007-laptop-is-the-permanent-host.md) | The laptop is the permanent host; devices are thin clients | Accepted |
 | [0008](0008-tools-are-plain-functions.md) | Tools are plain functions | Accepted |
-| [0009](0009-single-turn-commands.md) | Every command is single-turn | Accepted; amended by 0022 |
+| [0009](0009-single-turn-commands.md) | Every command is single-turn | Accepted |
 | [0010](0010-own-event-schema.md) | Kiki owns its event schema | Accepted |
 | [0011](0011-python-owns-the-mic-in-v0.md) | Python owns the mic in v0 (LocalAudioTransport) | Accepted |
 | [0012](0012-clear-list-without-confirmation.md) | Clear the list without confirmation | Accepted |
@@ -46,6 +46,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0018](0018-one-model-request-per-command.md) | One model request per command: the `update_list` output function | Accepted |
 | [0019](0019-whisper-base-with-vocabulary-prompt.md) | Whisper `base.en` with a grocery-vocabulary prompt | Accepted |
 | [0020](0020-ui-over-server-sent-events.md) | The UI is one HTML page over Server-Sent Events, standard library only | Accepted |
-| [0021](0021-smart-turn-ends-the-command.md) | Smart Turn decides when a spoken command is finished | Accepted; amended by 0023 |
-| [0022](0022-follow-up-window-after-each-reply.md) | Listen for five seconds after each reply, with the previous command as context | Accepted |
-| [0023](0023-grace-period-after-a-finished-sounding-pause.md) | Wait a short grace period after a pause sounds finished | Accepted |
+| [0021](0021-smart-turn-ends-the-command.md) | Smart Turn decides when a spoken command is finished | Accepted |

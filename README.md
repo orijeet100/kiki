@@ -39,7 +39,7 @@ We order groceries from home. The list is the first useful thing and the base fo
 
 ## Principles
 
-1. **Privacy by design.** Wake-word detection runs locally, before anything is transcribed. Audio never leaves the laptop. Only the text of a command goes to Claude: one said after the wake word, or in the 5 seconds right after Kiki answers (the follow-up window).
+1. **Privacy by design.** Wake-word detection runs locally, before anything is transcribed. Audio never leaves the laptop. Only the text of the command after the wake word goes to Claude.
 2. **State lives in tools and the database, not in the chat.** Every command is a fresh, single-turn call that sees only the current list.
 3. **Use existing frameworks.** Pipecat handles audio, turn detection and streaming. We don't hand-build them.
 4. **Small blocks, text before voice.** Every feature passes text tests before it is tried by voice.

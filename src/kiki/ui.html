@@ -231,7 +231,7 @@
     const did = el("span", { class: "chips" }, ...chips);
     const lat = turn.latency_ms;
     const card = el("li", {},
-      el("div", { class: "meta" }, el("span", {}, `${time} · ${turn.source}${turn.previous_command ? " · follow-up" : ""}`), el("span", {}, seconds(lat.total))),
+      el("div", { class: "meta" }, el("span", {}, `${time} · ${turn.source}`), el("span", {}, seconds(lat.total))),
       el("div", { class: "line" }, el("b", {}, "Heard"), turn.heard),
       el("div", { class: "line" }, el("b", {}, "Did"), did),
       el("div", { class: "line" }, el("b", {}, "Said"), turn.said),
@@ -239,7 +239,6 @@
     if (turn.error) card.append(el("div", { class: "error" }, turn.error));
     card.append(el("details", {},
       el("summary", {}, "Details"),
-      turn.previous_command ? el("div", {}, `Follow-up to: “${turn.previous_command}”`) : "",
       el("div", {}, `speech-to-text ${seconds(lat.stt)} · model ${seconds(lat.llm)} · speech ${seconds(lat.tts)} · ${turn.model}`),
       el("pre", {}, JSON.stringify(turn.tool_calls, null, 2)),
     ));
