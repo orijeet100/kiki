@@ -125,7 +125,7 @@ def test_fr_0_10_markdown_or_digits_are_sent_back_for_a_retry(conn):
     assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
 
 
-def test_bad_arguments_are_rejected_before_anything_changes(conn):
+def test_fr_0_3_quantity_below_one_is_rejected_before_anything_changes(conn):
     model, seen = scripted(
         update(set_quantities=[{"name": "milk", "quantity": 0}], reply="Okay."),
         reply(agent.DIDNT_CATCH),
@@ -135,7 +135,7 @@ def test_bad_arguments_are_rejected_before_anything_changes(conn):
     assert turn["tool_calls"] == []
 
 
-def test_tool_errors_are_logged_and_retried(conn, monkeypatch):
+def test_nfr_0_4_tool_errors_are_logged_and_retried(conn, monkeypatch):
     monkeypatch.setattr(tools, "clear_list", lambda conn: {"error": "disk on fire"})
     model, seen = scripted(
         update(clear=True, reply="Cleared."), reply(agent.DIDNT_CATCH)

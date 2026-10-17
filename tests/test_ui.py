@@ -94,15 +94,15 @@ def test_fr_0_13_a_new_page_shows_past_runs(server):
     assert {i["name"] for i in snapshot["items"]} == {"bread", "milk"}
 
 
-def test_rejects_requests_addressed_to_another_host(server):
+def test_nfr_0_6_rejects_requests_addressed_to_another_host(server):
     response = request(server, "GET", "/", headers={"Host": "evil.example:8765"})
     assert response.status == 403
 
 
-def test_rejects_commands_that_are_not_json(server):
+def test_nfr_0_6_rejects_commands_that_are_not_json(server):
     assert post_command(server, "add milk", content_type="text/plain").status == 415
 
 
 @pytest.mark.parametrize("text", ["", "   ", "x" * (ui.MAX_COMMAND_CHARS + 1)])
-def test_rejects_empty_or_oversized_commands(server, text):
+def test_nfr_0_6_rejects_empty_or_oversized_commands(server, text):
     assert post_command(server, text).status == 400
