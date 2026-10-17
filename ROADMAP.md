@@ -24,6 +24,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
 | v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [DESIGN.md](DESIGN.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
 | v0.5 | **Done** (2026-10-17) | **Natural pauses** (from daily use). A pause mid-sentence no longer ends the command; only one Kiki runs at a time. |
+| v0.6 | Reverted (2026-10-17) | Follow-up window after each reply. Rolled back: background speech (a movie) kept it listening and answering. |
+| v0.7 | **Done** (2026-10-17) | **Sounds and wake word** (from daily use). Glass listening chime at a comfortable level, no closing chime, wake threshold 0.4, wake scores in the log. |
 
 ### Functional requirements
 

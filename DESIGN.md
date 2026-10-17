@@ -18,7 +18,7 @@ Watching Kiki work: what it heard, what it did, what it said, and how the list c
 | Topic | First cut |
 |---|---|
 | Layout | Three panels side by side (assistant, list, runs); stacked on narrow screens |
-| Sounds | Soft glass chimes (owner's pick of glass, marimba and bell): rising fifth when Kiki starts listening; no sound when it stops (the closing chime was removed) |
+| Sounds | Soft glass chimes (owner's pick of glass, marimba and bell): rising fifth when Kiki starts listening, at a peak of 0.45 (`KIKI_CHIME_VOLUME`); no sound when it stops (the closing chime was removed) |
 | Orb | CSS conic gradient (orange, yellow, pink). Idle: dim, slow breathing. Listening: bright glow, fast breathing. Thinking: fast spin, slightly smaller. Speaking: quick pulse with a pink glow. Error: red. No motion under "reduce motion" |
 | Turn card | Time and source (voice/text), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. Under Details: per-stage latency, model, raw tool calls |
 | List panel | Read-only. Rows that are new or changed flash yellow for 1.5 s. Count in the heading |

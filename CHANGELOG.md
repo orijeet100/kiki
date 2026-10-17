@@ -4,23 +4,19 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-### Changed
-- Listening chime at -7 dBFS (peak 0.45) instead of -3: louder than the first glass chime, which went unnoticed, but no longer jarring. `KIKI_CHIME_VOLUME` sets it.
+## [v0.7] - 2026-10-17
+
+Sounds and wake word, tuned by ear and from real use.
 
 ### Changed
-- Wake threshold 0.4 instead of 0.5. With a real voice, "hey jarvis" scored 0.46 and only crossed 0.5 about 0.3 s later, so the chime came late. Background speech has scored at most 0.24 so far; the near-miss log shows if 0.4 lets false wakes through.
+- The listening chime is a soft "glass" tone instead of a bare beep: a sine with gentle 2nd and 3rd harmonics, a click-free attack and a 1.2 s ring-out, rendered at 48 kHz, rising from C6 to G6. Picked by ear from three styles (glass, marimba, bell). Its level is a peak of 0.45 (about -7 dBFS): 0.32 went unnoticed and 0.7 was too loud. `KIKI_CHIME_VOLUME` sets it.
+- Wake threshold 0.4 instead of 0.5. A real "hey jarvis" scored 0.46 and only crossed 0.5 about 0.3 s later, so the chime came late. Background speech has scored at most 0.24 so far.
 
 ### Added
-- The terminal logs each wake word with its score, and near-misses (0.1 up to the threshold) with their best score, to tune `KIKI_WAKE_THRESHOLD` from real use. The fading tail of a heard wake word isn't counted as a miss.
-
-### Changed
-- The listening chime is louder (-3 dBFS instead of -10) and rings longer (1.2 s instead of 0.7): at the old level it went unnoticed.
+- The terminal logs every wake word with its score, and near-misses (0.1 up to the threshold) with their best score, to tune `KIKI_WAKE_THRESHOLD` from real use. The fading tail of a wake word that was heard isn't counted as a miss.
 
 ### Removed
-- The chime when Kiki stops listening. Only the listening chime plays now (FR-0.11 updated).
-
-### Changed
-- Softer chimes: the bare 16 kHz beeps are replaced by "glass" tones (sine plus gentle harmonics, click-free attack, natural ring-out, 48 kHz), picked by ear from three styles. Rising fifth when listening starts, falling pair when it stops.
+- The chime when Kiki stops listening (FR-0.11 updated). The reply, or the silence, says it.
 
 ### Reverted
 - v0.6 (the 5-second follow-up window and the end-of-command grace period) is rolled back to v0.5 behavior. With a movie playing, the follow-up window took the dialogue as commands, and each answer opened a new window, so Kiki kept listening and answering. Kiki again listens only after "hey jarvis". The v0.6 work stays in git (tag `v0.6`) and the mic watchdog is parked on the `v0-listening-state-fix` branch.
