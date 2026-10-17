@@ -103,14 +103,14 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 | Processor | Job |
 |---|---|
-| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). On the wake word it plays the listening chime and opens. It closes, with the done chime, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.4) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
 | `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished, or `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
 | `PiperTTSService` | Speaks the reply locally. |
 
-Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 0.7 s and -10 dBFS. Listening starts with a rising fifth (C6 to G6); it stops with a falling pair (D6 to G5) (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
+Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -7 dBFS by default (`KIKI_CHIME_VOLUME`; -10 dBFS went unnoticed, -3 dBFS was too loud). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
 
 **Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.26 s after the last word for a finished-sounding sentence. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
@@ -241,11 +241,12 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_MODEL` | `anthropic:claude-haiku-5-5` | Pydantic AI model string, `provider:model`. Swap with e.g. `openai:<model>`; `test` runs Pydantic AI's offline TestModel |
 | `KIKI_DB` | `kiki.db` | SQLite file path |
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
-| `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you |
+| `KIKI_WAKE_THRESHOLD` | `0.4` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
+| `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
 

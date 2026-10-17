@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 from pipecat.audio.turn.base_turn_analyzer import BaseTurnAnalyzer, EndOfTurnState
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -42,7 +43,12 @@ from kiki.events import record_turn, set_state
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
-WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
+# 0.4, not openWakeWord's usual 0.5: a real "hey jarvis" climbed past 0.46 and only crossed
+# 0.5 ~0.3 s later, delaying the chime. Background speech has scored at most 0.24 so far.
+WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.4"))
+NEAR_MISS_SCORE = (
+    0.1  # wake scores between this and the threshold are logged as near-misses
+)
 WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
@@ -61,6 +67,8 @@ PIPER_VOICE = os.environ.get("KIKI_PIPER_VOICE", "en_US-lessac-medium")
 
 
 CHIME_RATE = 48000  # rendered at full quality; the speaker output resamples as needed
+# Peak level, 0 to 1. 0.32 went unnoticed and 0.7 was too loud on the laptop speakers.
+CHIME_VOLUME = float(os.environ.get("KIKI_CHIME_VOLUME", "0.45"))
 
 
 def chime(notes: list[tuple[float, float, float]]) -> bytes:
@@ -71,7 +79,11 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
     owner from three styles (glass, marimba, bell).
     """
     partials = [(1, 1.0), (2, 0.22), (3, 0.06)]  # (frequency ratio, amplitude)
-    decay, attack, tail = 0.18, 0.006, 0.6
+    decay, attack, tail = (
+        0.3,
+        0.006,
+        1.1,
+    )  # rings long enough to notice across a kitchen
     out = np.zeros(int(CHIME_RATE * (max(start for _, start, _ in notes) + tail)))
     for freq, start, gain in notes:
         i = int(CHIME_RATE * start)
@@ -86,13 +98,13 @@ def chime(notes: list[tuple[float, float, float]]) -> bytes:
         out[i:] += gain * tone * rise * np.exp(-t / (decay * 3))
     fade = int(CHIME_RATE * 0.01)
     out[-fade:] *= np.linspace(1, 0, fade)  # end exactly at silence: no click
-    out *= 0.32 / np.max(np.abs(out))  # about -10 dBFS: clear, not loud
+    out *= CHIME_VOLUME / np.max(np.abs(out))
     return (out * 32767).astype("<i2").tobytes()
 
 
-# Rising fifth (C6 to G6): "I'm listening". Falling (D6 to G5): "I stopped listening".
+# Rising fifth (C6 to G6): "I'm listening". There is no sound when listening stops: the
+# owner found the falling chime unpleasant, and the reply (or silence) already says it.
 LISTENING_CHIME = chime([(1046.5, 0.0, 1.0), (1568.0, 0.09, 0.85)])
-DONE_CHIME = chime([(1174.7, 0.0, 0.8), (784.0, 0.09, 0.9)])
 
 
 def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
@@ -117,6 +129,7 @@ class WakeGate(FrameProcessor):
         self._detect = detect or hey_jarvis_detector()
         self._buffer = bytearray()
         self._last_wake = -WAKE_REFRACTORY_SECS
+        self._best_miss = 0.0  # highest score of the current near-miss, for the log
         self._listening = False
         self._heard_speech = False
         self._listening_since = 0.0
@@ -155,12 +168,28 @@ class WakeGate(FrameProcessor):
             chunk = np.frombuffer(bytes(self._buffer[:chunk_bytes]), dtype=np.int16)
             del self._buffer[:chunk_bytes]
             # ponytail: scored inline (~ms per chunk); move to an executor if the loop ever lags.
-            if self._detect(chunk) >= WAKE_THRESHOLD:
+            score = self._detect(chunk)
+            if score >= WAKE_THRESHOLD:
                 now = time.monotonic()
                 if now - self._last_wake > WAKE_REFRACTORY_SECS:
                     self._last_wake = now
                     heard = True
+                    logger.info(f"Kiki: wake word heard (score {score:.2f})")
+            self._log_near_miss(score)
         return heard
+
+    def _log_near_miss(self, score: float):
+        """Log attempts that scored some but not enough, to tune KIKI_WAKE_THRESHOLD."""
+        if time.monotonic() - self._last_wake < WAKE_REFRACTORY_SECS:
+            return  # the tail of a wake word that was heard, not a miss
+        if NEAR_MISS_SCORE <= score < WAKE_THRESHOLD:
+            self._best_miss = max(self._best_miss, score)
+        elif score < NEAR_MISS_SCORE and self._best_miss:
+            logger.info(
+                f"Kiki: almost heard the wake word (score {self._best_miss:.2f}, "
+                f"needs {WAKE_THRESHOLD:.2f})"
+            )
+            self._best_miss = 0.0
 
     async def _start_listening(self):
         if self._bot_speaking:
@@ -174,7 +203,6 @@ class WakeGate(FrameProcessor):
     async def _stop_listening(self):
         self._listening = False
         set_state("thinking" if self._heard_speech else "idle")
-        await self._play(DONE_CHIME)
 
     async def _play(self, pcm: bytes):
         await self.push_frame(
