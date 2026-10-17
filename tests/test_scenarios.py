@@ -142,3 +142,9 @@ def test_nfr_0_3_turns_on_new_threads_do_not_stall(conn):
         thread.start()
         thread.join()
     assert max(took) < 5, took
+
+
+def test_scenario_13_fr_0_16_follow_up_continues_the_previous_command(conn):
+    seed(conn, ("chicken", 1))
+    agent.run_turn("And eggs.", conn, previous_command="I want to add chicken.")
+    assert state(conn) == {"chicken": 1, "egg": 1}

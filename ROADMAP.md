@@ -24,6 +24,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
 | v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [DESIGN.md](DESIGN.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
 | v0.5 | **Done** (2026-10-17) | **Natural pauses** (from daily use). A pause mid-sentence no longer ends the command; only one Kiki runs at a time. |
+| v0.6 | **Done** (2026-10-17) | **Follow-up window** (from daily use). Kiki keeps listening 5 s after each reply, no wake word needed; list commas no longer end a command. |
 
 ### Functional requirements
 
@@ -44,12 +45,13 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [DESIGN.md](DESIGN.md). |
 | FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. The command ends when the sentence sounds finished, or after 3 seconds of silence. |
 | FR-0.15 | v0.5 | Only one Kiki runs at a time. Starting a second one exits with "Kiki is already running". |
+| FR-0.16 | v0.6 | For 5 seconds after each spoken reply, Kiki listens without the wake word. A command said then is understood with the previous one as context ("and eggs" after "I want to add chicken" adds eggs). |
 
 ### Non-functional requirements
 
 | ID | Step | Requirement |
 |---|---|---|
-| NFR-0.1 | v0.2 | Nothing is transcribed or sent anywhere before the wake word fires. |
+| NFR-0.1 | v0.2, v0.6 | Nothing is transcribed or sent anywhere unless Kiki is listening: after the wake word, or in the 5-second follow-up window right after its reply (FR-0.16). |
 | NFR-0.2 | v0.2 | Audio never leaves the laptop. Only the command text goes to the Claude API. |
 | NFR-0.3 | v0.3 | End of speech to first spoken audio is about 2 seconds or less, measured from the turn log (median over 20 commands). |
 | NFR-0.4 | v0.1 | Every turn is appended as one JSON line to the turn log, in the event schema from [ARCHITECTURE.md](ARCHITECTURE.md#events). No audio is stored. |
@@ -72,6 +74,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | 10 | "Clear the list" (5 items) | List empty, reply mentions five, log has the five items | FR-0.7, NFR-0.4 |
 | 11 | "Blorp the frim" | "Sorry, I didn't catch that.", list unchanged | FR-0.8 |
 | 12 | "Dot the eggs" (Whisper's mishearing of "got the eggs") | Eggs removed | FR-0.4 |
+| 13 | "And eggs." right after "I want to add chicken." (chicken on the list) | Eggs added, chicken unchanged | FR-0.16 |
 
 ### Definition of done
 
@@ -80,6 +83,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.3:** NFR-0.3 met. False wakes and premature cut-offs are rare enough for a week of daily use.
 - **v0.4:** FR-0.13 and NFR-0.6 met.
 - **v0.5:** FR-0.14 and FR-0.15 met; a command with a 1.2 s mid-sentence pause is heard as one command by voice.
+- **v0.6:** FR-0.16 met; by voice, "Hey Jarvis. I want to add chicken.", the reply, then "And eggs." with no wake word leaves chicken and eggs on the list.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0
