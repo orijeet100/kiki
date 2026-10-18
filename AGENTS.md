@@ -4,7 +4,8 @@ Rules for anyone writing code in this repo, human or coding agent. More detail w
 
 ## Before you start
 
-Read in this order: [README.md](README.md), the active version in [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md). Check [docs/adr/](docs/adr/README.md) before changing anything a decision covers.
+Read in this order: [README.md](README.md), the active version in [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md).
+For UI work, also read [docs/ui.md](docs/ui.md) (what it shows and does) and [DESIGN.md](DESIGN.md) (how it looks; its "Kiki overrides" section wins). Check [docs/adr/](docs/adr/README.md) before changing anything a decision covers.
 
 ## Rules
 
