@@ -4,6 +4,16 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.9] - 2026-10-17
+
+Framer look.
+
+### Changed
+- The UI keeps its v0.4 layout and behavior and takes its look from DESIGN.md, the Framer template plus a "Kiki overrides" section (FR-0.16): near-black canvas, charcoal panels, white pill Send button, Inter/system type with Framer's sizes and tracking, the orb in Framer's orange, coral and magenta.
+- Dark only; the light theme is gone.
+- Changed list rows get a blue ring instead of a yellow flash. Errors use one red token, `semantic-error`.
+- The old DESIGN.md (what the UI shows and does) moved to docs/ui.md; DESIGN.md now holds only the visual system.
+
 ## [v0.8] - 2026-10-17
 
 List commas.

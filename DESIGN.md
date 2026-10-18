@@ -563,12 +563,14 @@ The defining decorative surface of Framer's marketing — oversized atmospheric 
 | Did chips ("added bread") | `{rounded.sm}` badge on `{colors.surface-1}`, `{typography.caption}` |
 | Text box | `{components.text-input}`, focus ring per level 3 |
 | Send button | `{components.button-primary}` |
-| Details disclosure (`<summary>`) | `{components.button-translucent}` |
+| Details disclosure (`<summary>`) | `{components.button-translucent}` shape, on `{colors.hairline}` so it lifts off the `surface-2` card |
 | Times, latency, model | `{colors.ink-muted}`, `{typography.micro}` |
 | Orb | The page's one gradient spotlight: its colors come from `{colors.gradient-orange}`, `{colors.gradient-coral}`, `{colors.gradient-magenta}` |
 
-### Open (owner to decide)
+### Decided for v0.9 (2026-10-17)
 
-- **Light mode.** Framer is dark only; the v0.4 UI follows the system setting. Until decided: dark is the reference, and a light variant swaps `canvas`/`surface-*`/`ink` for their inverses.
-- **Changed-row flash.** The v0.4 list flashes yellow; Framer allows no second accent. Candidate: flash `{colors.surface-2}` with an `{colors.accent-blue}` ring.
-- **Error state.** Framer has no error color. The orb's error red needs a token (`semantic-error`) if kept.
+- **Dark only.** Framer's identity is dark, and the UI is a status screen on the laptop. The page sets `color-scheme: dark` so scrollbars and the input match; there is no light theme.
+- **Changed-row flash.** A new or changed list row lifts to `{colors.surface-2}` with a 1px `{colors.accent-blue}` inset ring for 1.5 s, then fades back. Blue as a selection signal is within Framer's rules; the v0.4 yellow is gone.
+- **One error color.** `semantic-error` `#ff5c5c` is added next to Framer's `semantic-success`, as a signal color only (text, the offline pill, the orb's error state), never a surface. The orb's error shades are mixes of it, not new hex values.
+- **Focus stays visible.** Framer's level-3 ring (`rgba(0,153,255,0.15)`) is too faint to see. Focus is a 2px `{colors.accent-blue}` outline instead.
+- **The state label is the one display line.** "Listening…" etc. use `{typography.display-md}`; it's the statement of the page.

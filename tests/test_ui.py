@@ -2,6 +2,8 @@
 
 import http.client
 import json
+import re
+from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -111,3 +113,19 @@ def test_nfr_0_6_rejects_empty_or_oversized_commands(server, text):
 def test_fr_0_15_a_second_kiki_cannot_start_on_the_same_port(server, tmp_path):
     with pytest.raises(ui.AlreadyRunning):
         ui.serve(connect(str(tmp_path / "other.db")), port=server.server_address[1])
+
+
+def test_fr_0_16_colors_are_design_md_tokens():
+    root = Path(__file__).parent.parent
+    page = (root / "src/kiki/ui.html").read_text(encoding="utf-8")
+    design = (root / "DESIGN.md").read_text(encoding="utf-8").lower()
+    style = page[page.index("<style>") : page.index("</style>")]
+    tokens = style[style.index(":root {") : style.index("}")]
+    rest = style.replace(tokens, "")
+
+    declared = re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-f]{6})", tokens)
+    assert declared
+    for name, value in declared:
+        assert value in design, f"--{name} {value} isn't in DESIGN.md"
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", rest)
+    assert "prefers-color-scheme" not in style

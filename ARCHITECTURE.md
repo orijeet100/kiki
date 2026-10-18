@@ -137,7 +137,7 @@ Only the transcript text crosses the network (to the model API). Audio, the wake
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
 
-The page shows an orb whose look follows `state`, the list (rows that changed flash briefly), and run cards (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details). Dark and light follow the system setting; animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
+The page shows an orb whose look follows `state`, the list (rows that changed flash briefly), and run cards (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details). The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
 - Binds to 127.0.0.1 only (NFR-0.6).
