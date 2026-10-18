@@ -4,6 +4,15 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.11] - 2026-10-17
+
+Follow-up window, again.
+
+### Added
+- After each spoken reply Kiki keeps listening for 5 seconds (`KIKI_FOLLOW_UP_SECS`), so another command needs no "hey jarvis". No chime; the orb listens, then goes back to idle if nobody speaks (FR-0.18, ADR 0025).
+- Speech in the window that isn't a command (a movie, people talking) gets no reply and opens no new window: the guard v0.6 lacked. It is still logged, with nothing said.
+- Each follow-up is a standalone command; Claude still sees no previous turns (ADR 0009).
+
 ## [v0.10] - 2026-10-17
 
 Speaking Orb and a calmer layout.

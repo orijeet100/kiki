@@ -1,6 +1,6 @@
 # 0022. Listen for five seconds after each reply, with the previous command as context
 
-- Status: Reverted in v0.7: with a movie playing, background speech kept it listening and answering
+- Status: Reverted in v0.7: with a movie playing, background speech kept it listening and answering. Superseded by 0025
 - Date: 2026-10-17
 - Related: FR-0.16, NFR-0.1. Amends 0009 (single-turn) and 0016 (one command per wake word).
 

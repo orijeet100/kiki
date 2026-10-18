@@ -55,7 +55,7 @@ From top to bottom:
 | Kiki state | Orb |
 |---|---|
 | idle | Listening shape, still, smaller and dimmed, in white |
-| listening | Listening shape at full size and brightness, rippling, in white: "hey jarvis" visibly wakes it |
+| listening | Listening shape at full size and brightness, rippling, in white: "hey jarvis" visibly wakes it. Also for 5 s after each reply, while Kiki listens for a follow-up |
 | thinking | Ribbons orbiting, in violet |
 | speaking | A lobed sphere swelling with each syllable, a lit ring rising per syllable, in magenta |
 | error | Listening shape, still, gray and faded; the label turns red |
