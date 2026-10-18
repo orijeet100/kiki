@@ -4,6 +4,19 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.8] - 2026-10-17
+
+List commas.
+
+### Fixed
+- The comma pause in a spoken list ended the command: "Add milk, two apples and some rice" was heard as "Add milk." and the rest was lost (FR-0.14). When a pause sounds finished, Kiki now waits 0.4 s more; speech in that grace period keeps the same command (ADR 0023, restored on its own from v0.6 without the follow-up window). `KIKI_END_GRACE_SECS` sets it. A finished command now ends about 0.66 s after the last word instead of 0.26 s.
+
+### Changed
+- Real-model voice tests feed audio at real-time pace (`RealTimeMic`); fed all at once, Smart Turn judged the wrong audio and the comma problem stayed hidden. Voice-scenario failures now show what Whisper heard.
+
+### Added
+- End-to-end test: "Hey Jarvis. Add milk, two apples and some rice." reaches the agent as one command. It fails 2 of 3 runs with the grace period off and passes every run with it on.
+
 ## [v0.7] - 2026-10-17
 
 Sounds and wake word, tuned by ear and from real use.
