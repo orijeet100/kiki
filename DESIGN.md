@@ -549,7 +549,7 @@ The defining decorative surface of Framer's marketing — oversized atmospheric 
 
 ### Fixed by existing decisions
 
-- **No web fonts.** The UI is one HTML file with no dependencies and runs on localhost ([ADR 0020](docs/adr/0020-ui-over-server-sent-events.md), NFR-0.6). GT Walsheim is proprietary and Inter would have to be fetched. Use `"Inter Variable", Inter, system-ui, sans-serif` for everything: Inter where it's installed, the system face otherwise. Keep the OpenType features (`cv11` etc.); they do nothing harmlessly when the font lacks them.
+- **No web fonts.** The UI is one HTML file plus the vendored orb script, loads nothing from the network and runs on localhost ([ADR 0020](docs/adr/0020-ui-over-server-sent-events.md), [ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md), NFR-0.6). GT Walsheim is proprietary and Inter would have to be fetched. Use `"Inter Variable", Inter, system-ui, sans-serif` for everything: Inter where it's installed, the system face otherwise. Keep the OpenType features (`cv11` etc.); they do nothing harmlessly when the font lacks them.
 - **Dashboard sizes, not poster sizes.** Kiki is a status screen, not a marketing page. Display tokens stop at `{typography.display-md}`; panel titles use `{typography.headline}`, everything else `{typography.body}` and below.
 - **Tokens live once in code.** The UI's `:root` declares one CSS variable per token used here, named after it (`--canvas`, `--surface-1`, `--ink-muted`, `--accent-blue`, `--rounded-xl`...). No raw hex values elsewhere in the stylesheet.
 
@@ -558,14 +558,23 @@ The defining decorative surface of Framer's marketing — oversized atmospheric 
 | Kiki element ([docs/ui.md](docs/ui.md)) | Framer component |
 |---|---|
 | Page background | `{colors.canvas}` |
-| The three panels (assistant, list, runs) | `{components.product-mockup-tile}` |
-| Turn card | `{components.template-card}` on `{colors.surface-2}` |
-| Did chips ("added bread") | `{rounded.sm}` badge on `{colors.surface-1}`, `{typography.caption}` |
-| Text box | `{components.text-input}`, focus ring per level 3 |
+| Top bar | `{components.top-nav}`: "Kiki" in `{typography.headline}` left; connection and History right |
+| Connection | `{typography.caption}` in `{colors.ink-muted}` with a 7px dot: `{colors.semantic-success}` live, `semantic-error` (dot and word) when reconnecting |
+| History button | `{components.button-secondary}`; the run count in `{colors.ink-muted}` |
+| State label | `{typography.display-md}`, the page's one display line; `semantic-error` in the error state |
+| Orb | The Speaking Orb, the page's one spotlight, in exact tokens: listening and idle `{colors.primary}` (white, Framer's monochrome), thinking `{colors.gradient-violet}`, speaking `{colors.gradient-magenta}`, done `{colors.semantic-success}`, searching `{colors.accent-blue}`. Caption in `{colors.ink}`, the body font at 20px (`{typography.body-lg}` scale) |
+| Last run (under the state) | No card: one line on `{colors.canvas}`, what was heard in `{colors.ink}` and quotes, then the Did chips on `{colors.surface-1}`; hover lifts the line to `{colors.surface-1}` and its chips to `{colors.surface-2}` |
+| Example commands | `{components.button-secondary}` at `{typography.caption}` size |
+| Text box | Composer: `{components.text-input}` on `{colors.surface-1}` with a 1px `{colors.hairline}` border, shaped `{rounded.pill}` because it holds the pill; border turns `{colors.accent-blue}` on focus. It docks to the bottom of the window over a fade from `{colors.canvas}` to transparent (a fade, not a gradient surface) |
 | Send button | `{components.button-primary}` |
+| Hint under the text box | `{typography.micro}` in `{colors.ink-muted}` |
+| List | `{components.product-mockup-tile}`, `{rounded.xl}`; title `{typography.headline}`, count `{typography.caption}` muted; rows in two columns (one under 520px), `{typography.body}` split by `{colors.hairline-soft}`, quantity `{typography.body-sm}` muted with tabular figures |
+| History sheet | `{colors.surface-1}` panel from the right edge, `{rounded.xl}` on its left corners; backdrop `{colors.canvas}` at 70% with a 6px blur |
+| Close button | `{components.button-icon-circular}` on `{colors.surface-2}` |
+| Run cards in the sheet | `{components.template-card}` on `{colors.surface-2}`, chips on `{colors.surface-1}` |
+| Did chips ("added bread") | `{rounded.sm}` badge, `{typography.caption}` |
 | Details disclosure (`<summary>`) | `{components.button-translucent}` shape, on `{colors.hairline}` so it lifts off the `surface-2` card |
 | Times, latency, model | `{colors.ink-muted}`, `{typography.micro}` |
-| Orb | The page's one gradient spotlight: its colors come from `{colors.gradient-orange}`, `{colors.gradient-coral}`, `{colors.gradient-magenta}` |
 
 ### Decided for v0.9 (2026-10-17)
 
@@ -574,3 +583,11 @@ The defining decorative surface of Framer's marketing — oversized atmospheric 
 - **One error color.** `semantic-error` `#ff5c5c` is added next to Framer's `semantic-success`, as a signal color only (text, the offline pill, the orb's error state), never a surface. The orb's error shades are mixes of it, not new hex values.
 - **Focus stays visible.** Framer's level-3 ring (`rgba(0,153,255,0.15)`) is too faint to see. Focus is a 2px `{colors.accent-blue}` outline instead.
 - **The state label is the one display line.** "Listening…" etc. use `{typography.display-md}`; it's the statement of the page.
+
+### Decided for v0.10 (2026-10-17)
+
+- **The orb is the Speaking Orb, in Framer's exact colors** ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)). It reads `--orb-<state>` properties set to the tokens above, unmixed. Resting and listening are white, Framer's own monochrome; color appears only when Kiki is doing something (violet thinking, magenta speaking, green done), like Framer's spotlight cards breaking a monochrome grid. Orange and coral leave `:root`, unused; violet and magenta are in it.
+- **Error is an absence of color.** The orb goes gray at 40% opacity; red stays a signal on the label, never on the orb's particles.
+- **One centered column** ([docs/ui.md](docs/ui.md#layout-v010)). Everything sits on one axis, 640px wide, with 20px gutters: orb, state, last run, list, composer. Nothing to the left or right of it. The orb is 40% of the window height (240 to 420px); its halo overlaps the space above it. 30px between the last run and the list.
+- **Motion.** One ease-out curve, `cubic-bezier(.16, 1, .3, 1)`: the column rises 12px into place piece by piece on load (0.7s, 60ms apart), list rows cascade in on the first paint (35ms apart), the sheet slides in (0.4s), the orb grows from 84% when Kiki wakes (0.8s), buttons scale to 0.97 when pressed, hover lifts a surface one step. Entry motion is off under reduced motion.
+- **OpenType features on.** Body text sets `cv01`, `cv05`, `cv09`, `cv11`, `ss03`, `ss07` as Framer does; harmless where Inter isn't installed.

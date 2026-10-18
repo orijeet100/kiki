@@ -4,6 +4,16 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.10] - 2026-10-17
+
+Speaking Orb and a calmer layout.
+
+### Changed
+- The orb is the Speaking Orb from Ship Notes (MIT, vendored as `speaking-orb.js`, ADR 0024): a particle sphere that listens, thinks in ribbons, swells while Kiki speaks, and shows the reply as captions that fly out of it. A finished turn ends on a check mark. Its colors are Framer's exact tokens: white at rest and listening, violet thinking, magenta speaking, green done (FR-0.17). Idle is small and dim; "hey jarvis" makes it grow, brighten and ripple.
+- Layout: one centered column (orb, state, last run, list in two columns), with the text box docked to the bottom of the window. The last run is one line of what was heard and what changed; all runs are in a History sheet from the top bar. The same layout works on a phone.
+- The text box is a pill composer; example commands fill it before the first run. Quantities show only when more than one.
+- docs/ui.md rewritten for the new layout; DESIGN.md's Kiki overrides map every element to a Framer component.
+
 ## [v0.9] - 2026-10-17
 
 Framer look.

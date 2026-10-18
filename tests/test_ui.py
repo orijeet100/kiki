@@ -129,3 +129,17 @@ def test_fr_0_16_colors_are_design_md_tokens():
         assert value in design, f"--{name} {value} isn't in DESIGN.md"
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", rest)
     assert "prefers-color-scheme" not in style
+
+
+def test_fr_0_17_page_loads_the_speaking_orb_from_kiki_itself(server):
+    page = request(server, "GET", "/").read().decode()
+    assert '<script src="/speaking-orb.js"></script>' in page
+    assert "<speaking-orb" in page
+    # nothing from the network
+    assert not re.search(r"""(src|href)=["']https?:""", page)
+    response = request(server, "GET", "/speaking-orb.js")
+    assert response.status == 200
+    assert response.getheader("Content-Type").startswith("text/javascript")
+    script = response.read().decode()
+    assert "customElements.define('speaking-orb'" in script
+    assert "MIT License" in script

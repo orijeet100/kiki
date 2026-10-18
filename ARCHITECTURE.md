@@ -43,7 +43,8 @@ src/kiki/
   events.py   appends turn events to the log
   cli.py      terminal loop (v0.1)
   ui.py       local UI server (v0.4): page, live events, typed commands
-  ui.html     the whole UI: one file, no build step, no dependencies
+  ui.html     the whole UI: one file, no build step
+  speaking-orb.js  the orb: vendored Speaking Orb web component, MIT (ADR 0024)
   latency.py  median latency per stage from the turn log (v0.3)
   voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
 tests/
@@ -134,10 +135,11 @@ Only the transcript text crosses the network (to the model API). Audio, the wake
 | Route | What |
 |---|---|
 | `GET /` | `ui.html` |
+| `GET /speaking-orb.js` | the vendored orb script ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)) |
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
 
-The page shows an orb whose look follows `state`, the list (rows that changed flash briefly), and run cards (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details). The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
+The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns, and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
 - Binds to 127.0.0.1 only (NFR-0.6).
@@ -263,15 +265,16 @@ Approved. Anything else needs the owner's yes and an ADR.
 | `ruff` (via `uvx`, not installed) | Lint and format | v0.1 |
 | `pipecat-ai[local,silero,whisper,piper]` | Voice pipeline; pulls in PyAudio, faster-whisper and `piper-tts` | v0.2 |
 | `openwakeword` | Wake word (0.4.x: ONNX models bundled, works on Windows) | v0.2 |
+| Speaking Orb (`src/kiki/speaking-orb.js`, vendored, MIT, Ship Notes) | The UI's orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)). One file, no network, no build; Kiki's one change is reading its colors from DESIGN.md tokens | v0.10 |
 
 `piper-tts` is GPL-3.0. Fine for a personal assistant; if Kiki is ever distributed, switch to `PiperHttpTTSService` or Kokoro.
 
-The UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
+Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
 
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
-- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
+- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

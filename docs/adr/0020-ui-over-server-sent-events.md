@@ -1,6 +1,6 @@
 # 0020. The UI is one HTML page over Server-Sent Events, standard library only
 
-- Status: Accepted
+- Status: Accepted; orb superseded by 0024
 - Date: 2026-10-17
 - Related: FR-0.13, NFR-0.6. Builds on 0010 (own events), 0011 (which expected "a local WebSocket").
 
