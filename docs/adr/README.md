@@ -46,4 +46,6 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0018](0018-one-model-request-per-command.md) | One model request per command: the `update_list` output function | Accepted |
 | [0019](0019-whisper-base-with-vocabulary-prompt.md) | Whisper `base.en` with a grocery-vocabulary prompt | Accepted |
 | [0020](0020-ui-over-server-sent-events.md) | The UI is one HTML page over Server-Sent Events, standard library only | Accepted |
-| [0021](0021-smart-turn-ends-the-command.md) | Smart Turn decides when a spoken command is finished | Accepted |
+| [0021](0021-smart-turn-ends-the-command.md) | Smart Turn decides when a spoken command is finished | Accepted; amended by 0023 |
+| [0022](0022-follow-up-window-after-each-reply.md) | Listen for five seconds after each reply, with the previous command as context | Reverted |
+| [0023](0023-grace-period-after-a-finished-sounding-pause.md) | Wait a short grace period after a pause sounds finished | Accepted |

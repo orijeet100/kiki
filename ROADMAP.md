@@ -26,6 +26,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.5 | **Done** (2026-10-17) | **Natural pauses** (from daily use). A pause mid-sentence no longer ends the command; only one Kiki runs at a time. |
 | v0.6 | Reverted (2026-10-17) | Follow-up window after each reply. Rolled back: background speech (a movie) kept it listening and answering. |
 | v0.7 | **Done** (2026-10-17) | **Sounds and wake word** (from daily use). Glass listening chime at a comfortable level, no closing chime, wake threshold 0.4, wake scores in the log. |
+| v0.8 | **Done** (2026-10-17) | **List commas** (from daily use). The 0.4 s grace period from v0.6 comes back on its own, without the follow-up window, so a comma pause no longer ends the command. |
 
 ### Functional requirements
 
@@ -44,7 +45,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.11 | v0.2 | Saying "hey jarvis" starts listening, with a chime. No sound plays when listening stops (changed by the owner: the closing chime was unpleasant). |
 | FR-0.12 | v0.2 | Saying "hey jarvis" while Kiki is speaking stops the speech and starts a new command. |
 | FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [DESIGN.md](DESIGN.md). |
-| FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. The command ends when the sentence sounds finished, or after 3 seconds of silence. |
+| FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. Neither does the comma pause in a spoken list ("Add milk, two apples and some rice"). The command ends when the sentence sounds finished and no more words follow within 0.4 s, or after 3 seconds of silence. |
 | FR-0.15 | v0.5 | Only one Kiki runs at a time. Starting a second one exits with "Kiki is already running". |
 
 ### Non-functional requirements

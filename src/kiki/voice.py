@@ -55,6 +55,9 @@ LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
 # Silence that ends a command even if it sounded unfinished (someone stopped mid-sentence).
 MAX_PAUSE_SECS = float(os.environ.get("KIKI_MAX_PAUSE_SECS", "3"))
+# After a pause sounds finished, wait this much longer for more words before closing. Covers
+# the commas in a spoken list: "Add milk," sounds finished, but "two apples" follows (ADR 0023).
+END_GRACE_SECS = float(os.environ.get("KIKI_END_GRACE_SECS", "0.4"))
 # base.en takes 0.5 s per command vs 1.6 s for small.en; small.en is the fallback if it mishears.
 WHISPER_MODEL = os.environ.get("KIKI_WHISPER_MODEL", "base.en")
 # Primes Whisper with list vocabulary and spoken quantities. Without it base.en hears "braid",
@@ -214,9 +217,11 @@ class EndOfTurnDetector(FrameProcessor):
     """Ends a spoken command when it sounds finished, not at the first pause (ADR 0021).
 
     VAD reports every pause longer than PAUSE_SECS. At each one, Smart Turn (a small local
-    model that listens to intonation) judges whether the sentence is finished. Pauses that
-    aren't the end are hidden from Whisper, so it transcribes the whole command once. After
-    MAX_PAUSE_SECS of silence the command ends anyway.
+    model that listens to intonation) judges whether the sentence is finished. If it sounds
+    finished and nobody speaks for END_GRACE_SECS more, the command ends; speech in the grace
+    period (a list comma) keeps the same command going (ADR 0023). Pauses that aren't the end
+    are hidden from Whisper, so it transcribes the whole command once. After MAX_PAUSE_SECS of
+    silence the command ends anyway.
     """
 
     def __init__(self, analyzer: BaseTurnAnalyzer | None = None, **kwargs):
@@ -227,6 +232,7 @@ class EndOfTurnDetector(FrameProcessor):
         self._analyzer.set_sample_rate(SAMPLE_RATE)
         self._in_command = False
         self._speaking = False
+        self._ends_at: float | None = None  # set while waiting out the grace period
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -235,6 +241,7 @@ class EndOfTurnDetector(FrameProcessor):
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
             self._speaking = True
+            self._ends_at = None  # more words: not the end after all
             self._analyzer.update_vad_start_secs(frame.start_secs)
             if self._in_command:
                 return  # speech resumed after a pause: still the same command
@@ -244,7 +251,7 @@ class EndOfTurnDetector(FrameProcessor):
             if self._in_command:
                 state, _ = await self._analyzer.analyze_end_of_turn()
                 if state == EndOfTurnState.COMPLETE:
-                    await self._end_command()
+                    self._ends_at = time.monotonic() + END_GRACE_SECS
             return  # a pause; Whisper only hears about the end of the command
         elif isinstance(frame, InputAudioRawFrame):
             silence_ran_out = (
@@ -252,13 +259,15 @@ class EndOfTurnDetector(FrameProcessor):
                 == EndOfTurnState.COMPLETE
             )
             await self.push_frame(frame, direction)
-            if silence_ran_out and self._in_command:
+            grace_over = self._ends_at is not None and time.monotonic() >= self._ends_at
+            if self._in_command and (silence_ran_out or grace_over):
                 await self._end_command()
             return
         await self.push_frame(frame, direction)
 
     async def _end_command(self):
         self._in_command = False
+        self._ends_at = None
         self._analyzer.clear()
         await self.push_frame(
             VADUserStoppedSpeakingFrame(stop_secs=PAUSE_SECS)
