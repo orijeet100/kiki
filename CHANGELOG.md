@@ -4,6 +4,13 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed
+- The voice latency test (NFR-0.3) failed at about 2.2 s. The laptop was on battery, where Whisper and Piper run about 1.6 times slower; plugged in, the same code measured 1.7 s. The 0.4 s grace period from v0.8 is not part of the measured time.
+
+### Changed
+- Whisper runs on 8 CPU threads instead of faster-whisper's default 4 (`KIKI_WHISPER_THREADS`): about 0.15 s faster per command plugged in, 0.24 s on battery. Median end of speech to first audio is about 1.5 s plugged in.
+- The latency test warms up the model client first, as `python -m kiki.voice` does, so its first command no longer pays the ~5 s start-up.
+
 ## [v0.11] - 2026-10-17
 
 Follow-up window, again.

@@ -64,6 +64,9 @@ MAX_PAUSE_SECS = float(os.environ.get("KIKI_MAX_PAUSE_SECS", "3"))
 END_GRACE_SECS = float(os.environ.get("KIKI_END_GRACE_SECS", "0.4"))
 # base.en takes 0.5 s per command vs 1.6 s for small.en; small.en is the fallback if it mishears.
 WHISPER_MODEL = os.environ.get("KIKI_WHISPER_MODEL", "base.en")
+# faster-whisper uses 4 CPU threads unless told otherwise; one per core of this laptop's 8 makes
+# base.en about 0.15 s faster (0.37 s vs 0.52 s). More threads than cores is slower again.
+WHISPER_THREADS = int(os.environ.get("KIKI_WHISPER_THREADS", "8"))
 # Primes Whisper with list vocabulary and spoken quantities. Without it base.en hears "braid",
 # "cut the eggs" and "milk to apples" (ADR 0019).
 WHISPER_PROMPT = (
@@ -360,8 +363,20 @@ class Brain(FrameProcessor):
 
 def processors(conn, model=None) -> list[FrameProcessor]:
     """Everything between the mic and the speaker."""
+    from faster_whisper import WhisperModel
     from pipecat.services.piper.tts import PiperTTSService
     from pipecat.services.whisper.stt import WhisperSTTService
+
+    class Whisper(WhisperSTTService):
+        """Pipecat's Whisper service with faster-whisper's thread count, which it doesn't expose."""
+
+        def _load(self):
+            self._model = WhisperModel(
+                self._settings.model,
+                device=self._device,
+                compute_type=self._compute_type,
+                cpu_threads=WHISPER_THREADS,
+            )
 
     gate = WakeGate()
     return [
@@ -370,7 +385,7 @@ def processors(conn, model=None) -> list[FrameProcessor]:
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=PAUSE_SECS))
         ),
         EndOfTurnDetector(),
-        WhisperSTTService(
+        Whisper(
             settings=WhisperSTTService.Settings(
                 model=WHISPER_MODEL, initial_prompt=WHISPER_PROMPT
             ),

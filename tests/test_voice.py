@@ -556,6 +556,7 @@ def test_nfr_0_3_median_end_of_speech_to_first_audio(tmp_path, speak, monkeypatc
     log = tmp_path / "turns.jsonl"
     monkeypatch.setenv("KIKI_LOG", str(log))
     conn = connect(str(tmp_path / "voice.db"))
+    agent.warm_up()  # as voice.run() does, so the first command doesn't pay the ~5 s start-up
     frames = []
     for command in LATENCY_COMMANDS * 2:
         frames += [
