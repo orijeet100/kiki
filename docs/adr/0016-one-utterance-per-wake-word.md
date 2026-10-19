@@ -1,6 +1,6 @@
 # 0016. The wake gate lets through one utterance per wake word
 
-- Status: Accepted; how the end of the utterance is detected is superseded by 0021
+- Status: Accepted; how the end of the utterance is detected is superseded by 0021; amended by 0025 (a follow-up window after each reply)
 - Date: 2026-10-17
 - Related: FR-0.11, FR-0.12, NFR-0.1. Implements 0003 and 0009 for voice.
 

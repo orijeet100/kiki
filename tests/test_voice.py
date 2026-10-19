@@ -7,6 +7,7 @@ no microphone, no API cost. First run downloads the Whisper and Piper models.
 
 import asyncio
 import io
+import json
 import os
 import wave
 
@@ -15,11 +16,13 @@ import pytest
 from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     InputAudioRawFrame,
     InterruptionFrame,
     OutputAudioRawFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
+    TTSSpeakFrame,
     TTSStoppedFrame,
     UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
@@ -27,10 +30,10 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.tests.utils import SleepFrame, run_test
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from kiki import events, tools, voice
+from kiki import agent, events, tools, voice
 from kiki.db import connect
 
 
@@ -141,13 +144,11 @@ class FakeSpeaker(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-def states_during(frames) -> list[str]:
+def states_during(frames, run=downstream) -> list[str]:
     """State events the gate publishes while these frames go through it."""
-    from kiki import events
-
     subscription = events.subscribe()
     try:
-        downstream(frames)
+        run(frames)
         seen = []
         while not subscription.empty():
             event = subscription.get()
@@ -280,6 +281,84 @@ def test_fr_0_14_long_silence_ends_an_unfinished_sentence():
     analyzer.answers = [EndOfTurnState.INCOMPLETE]
     down, up = detector_output(analyzer, [*frames, *silence(0.1)])
     assert sum(isinstance(f, UserStoppedSpeakingFrame) for f in up) == 1
+
+
+REPLY = [BotStartedSpeakingFrame(), BotStoppedSpeakingFrame()]
+
+
+def after_reply(frames, gate=None):
+    """Kiki finishes speaking a reply, then these frames reach the gate. Returns downstream."""
+    gate = gate or voice.WakeGate(detect=FakeDetector())
+
+    async def go():
+        reply, _ = await run_test(
+            gate, frames_to_send=REPLY, frames_to_send_direction=FrameDirection.UPSTREAM
+        )
+        down, _ = await run_test(gate, frames_to_send=frames)
+        return reply + down
+
+    return asyncio.run(go())
+
+
+def test_fr_0_18_gate_listens_after_a_reply_without_the_wake_word():
+    echo = mic(np.full(320, 7))  # the tail of Kiki's own voice, right after playback
+    later = mic(np.full(320, 9))
+    gate = voice.WakeGate(detect=FakeDetector())
+    down = after_reply(
+        [*echo, SleepFrame(sleep=voice.ECHO_GUARD_SECS + 0.1), *later], gate
+    )
+    passed = [f.audio for f in down if isinstance(f, InputAudioRawFrame)]
+    assert passed == [f.audio for f in later]  # the echo is dropped, what follows isn't
+    assert chimes(down) == []  # opens silently; the orb shows it
+    assert gate.follow_up
+
+
+def test_fr_0_18_unused_window_goes_back_to_idle(monkeypatch):
+    monkeypatch.setattr(voice, "FOLLOW_UP_SECS", -1)
+    assert states_during(silence(0.1), after_reply) == ["listening", "idle"]
+
+
+def test_fr_0_18_no_window_over_an_interrupted_reply():
+    gate = voice.WakeGate(detect=FakeDetector())
+
+    async def go():
+        up = FrameDirection.UPSTREAM
+        await run_test(
+            gate,
+            frames_to_send=[BotStartedSpeakingFrame()],
+            frames_to_send_direction=up,
+        )
+        await run_test(gate, frames_to_send=WAKE)  # "hey jarvis" over the reply
+        await run_test(
+            gate,
+            frames_to_send=[BotStoppedSpeakingFrame()],
+            frames_to_send_direction=up,
+        )
+
+    asyncio.run(go())
+    assert not gate.follow_up  # still the wake word's session, with its own timeout
+
+
+@pytest.mark.parametrize("follow_up", [True, False])
+def test_fr_0_18_a_follow_up_that_is_not_a_command_gets_no_reply(
+    tmp_path, monkeypatch, follow_up
+):
+    monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
+    model = FunctionModel(
+        lambda m, i: ModelResponse(parts=[TextPart(agent.DIDNT_CATCH)])
+    )
+    brain = voice.Brain(
+        connect(str(tmp_path / "voice.db")), model, follow_up=lambda: follow_up
+    )
+    heard = TranscriptionFrame("And then the ship sank.", "", "")
+    down, _ = asyncio.run(run_test(brain, frames_to_send=[heard]))
+    spoken = any(isinstance(f, TTSSpeakFrame) for f in down)
+    assert spoken == (
+        not follow_up
+    )  # after the wake word, "Sorry, I didn't catch that."
+    if follow_up:  # logged, so you can see what it heard, but nothing was said
+        turn = json.loads(events.log_path().read_text().splitlines()[-1])
+        assert (turn["heard"], turn["said"]) == ("And then the ship sank.", "")
 
 
 class RealTimeMic(FrameProcessor):

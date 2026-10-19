@@ -1,7 +1,7 @@
 """Voice loop: mic -> wake gate -> VAD -> end of turn -> Whisper -> agent -> Piper -> speaker.
 
-Nothing reaches VAD or speech-to-text until "hey jarvis" is heard (NFR-0.1, ADR 0003).
-One wake word = one command (ADR 0009).
+Nothing reaches VAD or speech-to-text until "hey jarvis" is heard (NFR-0.1, ADR 0003), except
+for a few seconds after each reply (FR-0.18, ADR 0025). Each command is single-turn (ADR 0009).
 """
 
 import asyncio
@@ -37,7 +37,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.workers.runner import WorkerRunner
 
 from kiki import tools, ui
-from kiki.agent import run_turn, warm_up
+from kiki.agent import DIDNT_CATCH, run_turn, warm_up
 from kiki.db import connect
 from kiki.events import record_turn, set_state
 
@@ -51,6 +51,10 @@ NEAR_MISS_SCORE = (
 )
 WAKE_REFRACTORY_SECS = 2.0  # one "hey jarvis" scores high for several chunks
 LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
+# After each spoken reply, Kiki listens this long for a command without the wake word (ADR 0025).
+FOLLOW_UP_SECS = float(os.environ.get("KIKI_FOLLOW_UP_SECS", "5"))
+# The end of Kiki's own reply can still be in the room when playback ends; don't listen to it.
+ECHO_GUARD_SECS = 0.3
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
 PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
 # Silence that ends a command even if it sounded unfinished (someone stopped mid-sentence).
@@ -121,10 +125,12 @@ def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
 
 
 class WakeGate(FrameProcessor):
-    """Drops mic audio until the wake word; then lets one command through (FR-0.11, NFR-0.1).
+    """Drops mic audio unless Kiki is listening for a command (FR-0.11, FR-0.18, NFR-0.1).
 
-    The command ends when EndOfTurnDetector says so (UserStoppedSpeakingFrame), not at the
-    first pause. Saying the wake word while Kiki speaks interrupts the speech (FR-0.12).
+    Kiki listens after the wake word, and silently for FOLLOW_UP_SECS after each spoken reply
+    (ADR 0025). Each listening session lets one command through; it ends when
+    EndOfTurnDetector says so (UserStoppedSpeakingFrame), not at the first pause. Saying the
+    wake word while Kiki speaks interrupts the speech (FR-0.12).
     """
 
     def __init__(self, detect: Callable[[np.ndarray], float] | None = None, **kwargs):
@@ -134,8 +140,12 @@ class WakeGate(FrameProcessor):
         self._last_wake = -WAKE_REFRACTORY_SECS
         self._best_miss = 0.0  # highest score of the current near-miss, for the log
         self._listening = False
+        self.follow_up = (
+            False  # this session opened after a reply, not on the wake word
+        )
         self._heard_speech = False
-        self._listening_since = 0.0
+        self._opens_at = 0.0
+        self._gives_up_at = 0.0  # close if nobody has spoken by then
         self._bot_speaking = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -143,24 +153,26 @@ class WakeGate(FrameProcessor):
 
         if isinstance(frame, InputAudioRawFrame):
             if self._heard_wake_word(frame.audio):
-                await self._start_listening()
-            silent_too_long = (
-                time.monotonic() - self._listening_since > LISTEN_TIMEOUT_SECS
-            )
-            if self._listening and not self._heard_speech and silent_too_long:
+                await self._start_listening(LISTEN_TIMEOUT_SECS)
+            now = time.monotonic()
+            if self._listening and not self._heard_speech and now > self._gives_up_at:
                 await self._stop_listening()
-            if self._listening:
+            if self._listening and now >= self._opens_at:
                 await self.push_frame(frame, direction)
             return  # closed gate: audio goes nowhere
 
         if isinstance(frame, VADUserStartedSpeakingFrame):
             self._heard_speech = True
         elif isinstance(frame, UserStoppedSpeakingFrame) and self._listening:
-            await self._stop_listening()  # one command per wake word
+            await self._stop_listening()  # one command per session
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
+            if (
+                not self._listening
+            ):  # after an interruption the wake session is already open
+                await self._start_listening(FOLLOW_UP_SECS, follow_up=True)
         await self.push_frame(frame, direction)
 
     def _heard_wake_word(self, audio: bytes) -> bool:
@@ -194,14 +206,20 @@ class WakeGate(FrameProcessor):
             )
             self._best_miss = 0.0
 
-    async def _start_listening(self):
+    async def _start_listening(self, timeout: float, follow_up: bool = False):
         if self._bot_speaking:
             await self.broadcast_interruption()
+        opens_at = time.monotonic() + (ECHO_GUARD_SECS if follow_up else 0)
         self._listening = True
+        self.follow_up = follow_up
         self._heard_speech = False
-        self._listening_since = time.monotonic()
+        self._opens_at = opens_at
+        self._gives_up_at = opens_at + timeout
         set_state("listening")
-        await self._play(LISTENING_CHIME)
+        if (
+            not follow_up
+        ):  # a chime after every reply would get old fast; the orb shows it
+            await self._play(LISTENING_CHIME)
 
     async def _stop_listening(self):
         self._listening = False
@@ -278,12 +296,20 @@ class EndOfTurnDetector(FrameProcessor):
 
 
 class Brain(FrameProcessor):
-    """Transcript in, spoken reply out, via the same agent as the terminal (v0.1)."""
+    """Transcript in, spoken reply out, via the same agent as the terminal (v0.1).
 
-    def __init__(self, conn, model=None, **kwargs):
+    A follow-up (said in the window after a reply, `follow_up()` is true) that isn't a command
+    gets no reply: it was probably a TV or people talking, and with no reply no new window
+    opens (ADR 0025).
+    """
+
+    def __init__(
+        self, conn, model=None, follow_up: Callable[[], bool] = lambda: False, **kwargs
+    ):
         super().__init__(**kwargs)
         self._conn = conn
         self._model = model
+        self._follow_up = follow_up
         self._speech_ended = time.monotonic()
         self._waiting_for_speech: tuple[dict, float] | None = None
         self._last_error = False
@@ -312,6 +338,11 @@ class Brain(FrameProcessor):
         stt_done = time.monotonic()
         turn = await asyncio.to_thread(run_turn, text, self._conn, self._model, "voice")
         turn["latency_ms"]["stt"] = round((stt_done - self._speech_ended) * 1000)
+        if self._follow_up() and turn["said"] == DIDNT_CATCH:
+            turn["said"] = ""  # logged as heard, never spoken
+            set_state("idle")  # before the turn event, so the UI shows no check mark
+            record_turn(turn, tools.read_list(self._conn)["items"])
+            return
         self._last_error = bool(turn["error"])
         self._waiting_for_speech = (turn, time.monotonic())
         await self.push_frame(TTSSpeakFrame(turn["said"]))
@@ -332,8 +363,9 @@ def processors(conn, model=None) -> list[FrameProcessor]:
     from pipecat.services.piper.tts import PiperTTSService
     from pipecat.services.whisper.stt import WhisperSTTService
 
+    gate = WakeGate()
     return [
-        WakeGate(),
+        gate,
         VADProcessor(
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=PAUSE_SECS))
         ),
@@ -345,7 +377,7 @@ def processors(conn, model=None) -> list[FrameProcessor]:
             device="cpu",
             compute_type="int8",
         ),
-        Brain(conn, model),
+        Brain(conn, model, follow_up=lambda: gate.follow_up),
         PiperTTSService(settings=PiperTTSService.Settings(voice=PIPER_VOICE)),
     ]
 

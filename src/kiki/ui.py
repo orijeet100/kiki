@@ -1,4 +1,5 @@
-"""Local UI (v0.4): one HTML page, live over Server-Sent Events, standard library only (ADR 0020).
+"""Local UI (v0.4): one HTML page plus the vendored orb script, live over Server-Sent Events,
+standard library only (ADR 0020, ADR 0024).
 
 `python -m kiki.ui` serves the page with a text box; `python -m kiki.voice` serves it too.
 Bound to 127.0.0.1 only (NFR-0.6).
@@ -20,6 +21,7 @@ from kiki.db import connect
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("KIKI_UI_PORT", "8765"))
 PAGE = (Path(__file__).parent / "ui.html").read_bytes()
+ORB = (Path(__file__).parent / "speaking-orb.js").read_bytes()  # ADR 0024
 MAX_COMMAND_CHARS = 200
 KEEPALIVE_SECS = 15
 
@@ -47,6 +49,8 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 return self.send_error(403)
             if self.path == "/":
                 self._send(200, "text/html; charset=utf-8", PAGE)
+            elif self.path == "/speaking-orb.js":
+                self._send(200, "text/javascript; charset=utf-8", ORB)
             elif self.path == "/events":
                 self._stream()
             else:

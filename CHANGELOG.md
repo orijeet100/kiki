@@ -4,6 +4,35 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.11] - 2026-10-17
+
+Follow-up window, again.
+
+### Added
+- After each spoken reply Kiki keeps listening for 5 seconds (`KIKI_FOLLOW_UP_SECS`), so another command needs no "hey jarvis". No chime; the orb listens, then goes back to idle if nobody speaks (FR-0.18, ADR 0025).
+- Speech in the window that isn't a command (a movie, people talking) gets no reply and opens no new window: the guard v0.6 lacked. It is still logged, with nothing said.
+- Each follow-up is a standalone command; Claude still sees no previous turns (ADR 0009).
+
+## [v0.10] - 2026-10-17
+
+Speaking Orb and a calmer layout.
+
+### Changed
+- The orb is the Speaking Orb from Ship Notes (MIT, vendored as `speaking-orb.js`, ADR 0024): a particle sphere that listens, thinks in ribbons, swells while Kiki speaks, and shows the reply as captions that fly out of it. A finished turn ends on a check mark. Its colors are Framer's exact tokens: white at rest and listening, violet thinking, magenta speaking, green done (FR-0.17). Idle is small and dim; "hey jarvis" makes it grow, brighten and ripple.
+- Layout: one centered column (orb, state, last run, list in two columns), with the text box docked to the bottom of the window. The last run is one line of what was heard and what changed; all runs are in a History sheet from the top bar. The same layout works on a phone.
+- The text box is a pill composer; example commands fill it before the first run. Quantities show only when more than one.
+- docs/ui.md rewritten for the new layout; DESIGN.md's Kiki overrides map every element to a Framer component.
+
+## [v0.9] - 2026-10-17
+
+Framer look.
+
+### Changed
+- The UI keeps its v0.4 layout and behavior and takes its look from DESIGN.md, the Framer template plus a "Kiki overrides" section (FR-0.16): near-black canvas, charcoal panels, white pill Send button, Inter/system type with Framer's sizes and tracking, the orb in Framer's orange, coral and magenta.
+- Dark only; the light theme is gone.
+- Changed list rows get a blue ring instead of a yellow flash. Errors use one red token, `semantic-error`.
+- The old DESIGN.md (what the UI shows and does) moved to docs/ui.md; DESIGN.md now holds only the visual system.
+
 ## [v0.8] - 2026-10-17
 
 List commas.

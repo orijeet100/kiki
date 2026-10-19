@@ -43,7 +43,8 @@ src/kiki/
   events.py   appends turn events to the log
   cli.py      terminal loop (v0.1)
   ui.py       local UI server (v0.4): page, live events, typed commands
-  ui.html     the whole UI: one file, no build step, no dependencies
+  ui.html     the whole UI: one file, no build step
+  speaking-orb.js  the orb: vendored Speaking Orb web component, MIT (ADR 0024)
   latency.py  median latency per stage from the turn log (v0.3)
   voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
 tests/
@@ -103,11 +104,11 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 | Processor | Job |
 |---|---|
-| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.4) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per wake word) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.4) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per session) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. After each spoken reply (`BotStoppedSpeakingFrame`) it opens again with no wake word and no chime, for `KIKI_FOLLOW_UP_SECS` (5 s), passing audio only from 0.3 s after playback so Kiki's own voice isn't heard; `follow_up` says which kind of session it is ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md), FR-0.18). It doesn't reopen over an interrupted reply. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
 | `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished and still silent `KIKI_END_GRACE_SECS` (0.4 s) later, or after `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). Speech within the grace period, like the next item after a list comma, keeps the same command ([ADR 0023](docs/adr/0023-grace-period-after-a-finished-sounding-pause.md)). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
-| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. |
+| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. A follow-up the agent didn't catch (`DIDNT_CATCH`) is logged with `said` empty and not spoken, so no new window opens (FR-0.18). |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -7 dBFS by default (`KIKI_CHIME_VOLUME`; -10 dBFS went unnoticed, -3 dBFS was too loud). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
@@ -134,10 +135,11 @@ Only the transcript text crosses the network (to the model API). Audio, the wake
 | Route | What |
 |---|---|
 | `GET /` | `ui.html` |
+| `GET /speaking-orb.js` | the vendored orb script ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)) |
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
 
-The page shows an orb whose look follows `state`, the list (rows that changed flash briefly), and run cards (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details). Dark and light follow the system setting; animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
+The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns, and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
 - Binds to 127.0.0.1 only (NFR-0.6).
@@ -213,9 +215,9 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 
 | Value | Published by | When |
 |---|---|---|
-| `listening` | `WakeGate` | wake word heard |
+| `listening` | `WakeGate` | wake word heard; reply finished (the follow-up window) |
 | `thinking` | `WakeGate`, `ui.send_command` | end of a command, before the agent answers |
-| `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word; reply finished |
+| `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word or in the follow-up window; a follow-up that wasn't a command; reply finished |
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
 | `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
 
@@ -243,6 +245,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
 | `KIKI_WAKE_THRESHOLD` | `0.4` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
+| `KIKI_FOLLOW_UP_SECS` | `5` | How long Kiki listens after each reply for another command without the wake word |
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
 | `KIKI_END_GRACE_SECS` | `0.4` | After a pause sounds finished, how long to wait for more words before closing (list commas) |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
@@ -263,15 +266,16 @@ Approved. Anything else needs the owner's yes and an ADR.
 | `ruff` (via `uvx`, not installed) | Lint and format | v0.1 |
 | `pipecat-ai[local,silero,whisper,piper]` | Voice pipeline; pulls in PyAudio, faster-whisper and `piper-tts` | v0.2 |
 | `openwakeword` | Wake word (0.4.x: ONNX models bundled, works on Windows) | v0.2 |
+| Speaking Orb (`src/kiki/speaking-orb.js`, vendored, MIT, Ship Notes) | The UI's orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)). One file, no network, no build; Kiki's one change is reading its colors from DESIGN.md tokens | v0.10 |
 
 `piper-tts` is GPL-3.0. Fine for a personal assistant; if Kiki is ever distributed, switch to `PiperHttpTTSService` or Kokoro.
 
-The UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
+Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
 
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
-- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
+- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

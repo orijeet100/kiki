@@ -53,7 +53,8 @@ We order groceries from home. The list is the first useful thing and the base fo
 | [README.md](README.md) | What and why, principles | Rarely |
 | [ROADMAP.md](ROADMAP.md) | Versions, requirements (FR/NFR), definition of done | Edited while a version is active, frozen once shipped |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the system works right now | Updated in the same commit as the code |
-| [DESIGN.md](DESIGN.md) | UI design (v0.4) | Owned by the project owner |
+| [docs/ui.md](docs/ui.md) | What the UI shows and how it behaves | Owned by the project owner |
+| [DESIGN.md](DESIGN.md) | How the UI looks: colors, fonts, components (Framer template + Kiki overrides) | Owned by the project owner |
 | [docs/adr/](docs/adr/README.md) | Why each decision was made | Never edited, only superseded |
 | [CHANGELOG.md](CHANGELOG.md) | What actually shipped | Append-only |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or agent) writing code here | As rules are added |

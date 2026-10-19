@@ -22,11 +22,14 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.1 | **Done** (2026-10-17) | **Terminal.** Type a command, Claude calls tools, SQLite updates, the reply prints, the turn is logged. |
 | v0.2 | **Done** (2026-10-17) | **Voice on the laptop.** "hey jarvis", Python owns the mic, local STT and TTS, chimes. Same tools, unchanged. |
 | v0.3 | **Done** (2026-10-17), except the week of daily use (owner) | **Tune.** Wake sensitivity, end-of-turn timing, reply style, latency. |
-| v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [DESIGN.md](DESIGN.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
+| v0.4 | **Done** (2026-10-17), first-cut design (owner to revise in [docs/ui.md](docs/ui.md)) | **UI.** Orb, list and run history driven by Kiki's own events. |
 | v0.5 | **Done** (2026-10-17) | **Natural pauses** (from daily use). A pause mid-sentence no longer ends the command; only one Kiki runs at a time. |
 | v0.6 | Reverted (2026-10-17) | Follow-up window after each reply. Rolled back: background speech (a movie) kept it listening and answering. |
 | v0.7 | **Done** (2026-10-17) | **Sounds and wake word** (from daily use). Glass listening chime at a comfortable level, no closing chime, wake threshold 0.4, wake scores in the log. |
 | v0.8 | **Done** (2026-10-17) | **List commas** (from daily use). The 0.4 s grace period from v0.6 comes back on its own, without the follow-up window, so a comma pause no longer ends the command. |
+| v0.9 | **Done** (2026-10-17) | **Framer look.** The v0.4 UI, same layout and behavior, restyled with the colors, type and components in [DESIGN.md](DESIGN.md). Dark only. |
+| v0.10 | **Done** (2026-10-17) | **Speaking Orb and a calmer layout.** The Speaking Orb replaces the CSS orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)); one centered column with a docked text box, runs move to a History sheet ([docs/ui.md](docs/ui.md)). |
+| v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
 
 ### Functional requirements
 
@@ -44,15 +47,18 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.10 | v0.1 | Replies are one or two short sentences, with no markdown, bullets or emojis, and numbers written as spoken ("two milks"). |
 | FR-0.11 | v0.2 | Saying "hey jarvis" starts listening, with a chime. No sound plays when listening stops (changed by the owner: the closing chime was unpleasant). |
 | FR-0.12 | v0.2 | Saying "hey jarvis" while Kiki is speaking stops the speech and starts a new command. |
-| FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [DESIGN.md](DESIGN.md). |
+| FR-0.13 | v0.4 | A local browser UI shows the assistant state, the current list and the history of turns, as specified in [docs/ui.md](docs/ui.md). |
 | FR-0.14 | v0.5 | A pause mid-sentence ("Can you add one ... garlic") doesn't end the command. Neither does the comma pause in a spoken list ("Add milk, two apples and some rice"). The command ends when the sentence sounds finished and no more words follow within 0.4 s, or after 3 seconds of silence. |
 | FR-0.15 | v0.5 | Only one Kiki runs at a time. Starting a second one exits with "Kiki is already running". |
+| FR-0.16 | v0.9 | The UI takes its look from [DESIGN.md](DESIGN.md): every color in `ui.html` is a token declared once in `:root`, each token's value is in DESIGN.md, and there is no light theme. |
+| FR-0.17 | v0.10 | The orb is the vendored Speaking Orb, served by Kiki itself at `/speaking-orb.js` with its MIT notice; the page loads nothing from the network. |
+| FR-0.18 | v0.11 | For 5 seconds after Kiki finishes speaking a reply (`KIKI_FOLLOW_UP_SECS`), it listens for another command without the wake word, silently, while the UI shows Listening; it goes back to idle if nobody speaks. A follow-up is a standalone command (FR-0.9). If it isn't understood (FR-0.8), Kiki says nothing, changes nothing, and opens no new window. |
 
 ### Non-functional requirements
 
 | ID | Step | Requirement |
 |---|---|---|
-| NFR-0.1 | v0.2 | Nothing is transcribed or sent anywhere before the wake word fires. |
+| NFR-0.1 | v0.2 | Nothing is transcribed or sent anywhere before the wake word fires, except speech in the follow-up window after a reply (FR-0.18). |
 | NFR-0.2 | v0.2 | Audio never leaves the laptop. Only the command text goes to the Claude API. |
 | NFR-0.3 | v0.3 | End of speech to first spoken audio is about 2 seconds or less, measured from the turn log (median over 20 commands). |
 | NFR-0.4 | v0.1 | Every turn is appended as one JSON line to the turn log, in the event schema from [ARCHITECTURE.md](ARCHITECTURE.md#events). No audio is stored. |
@@ -83,6 +89,9 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.3:** NFR-0.3 met. False wakes and premature cut-offs are rare enough for a week of daily use.
 - **v0.4:** FR-0.13 and NFR-0.6 met.
 - **v0.5:** FR-0.14 and FR-0.15 met; a command with a 1.2 s mid-sentence pause is heard as one command by voice.
+- **v0.9:** FR-0.16 met; FR-0.13 tests still pass; the page checked by eye in the browser in each orb state.
+- **v0.10:** FR-0.17 met; FR-0.13 and FR-0.16 tests still pass; the page checked by eye at laptop and phone widths in each orb state, with a typed command and by voice.
+- **v0.11:** FR-0.18 met; by voice, a command said within 5 s of a reply works without "hey jarvis", and talking that isn't a command in the window gets no reply.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0
