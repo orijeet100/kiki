@@ -30,6 +30,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.9 | **Done** (2026-10-17) | **Framer look.** The v0.4 UI, same layout and behavior, restyled with the colors, type and components in [DESIGN.md](DESIGN.md). Dark only. |
 | v0.10 | **Done** (2026-10-17) | **Speaking Orb and a calmer layout.** The Speaking Orb replaces the CSS orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)); one centered column with a docked text box, runs move to a History sheet ([docs/ui.md](docs/ui.md)). |
 | v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
+| v0.12 | Planned | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
 
 ### Functional requirements
 
@@ -53,6 +54,15 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.16 | v0.9 | The UI takes its look from [DESIGN.md](DESIGN.md): every color in `ui.html` is a token declared once in `:root`, each token's value is in DESIGN.md, and there is no light theme. |
 | FR-0.17 | v0.10 | The orb is the vendored Speaking Orb, served by Kiki itself at `/speaking-orb.js` with its MIT notice; the page loads nothing from the network. |
 | FR-0.18 | v0.11 | For 5 seconds after Kiki finishes speaking a reply (`KIKI_FOLLOW_UP_SECS`), it listens for another command without the wake word, silently, while the UI shows Listening; it goes back to idle if nobody speaks. A follow-up is a standalone command (FR-0.9). If it isn't understood (FR-0.8), Kiki says nothing, changes nothing, and opens no new window. |
+| FR-0.19 | v0.12 | Every Item is Frequent or Occasional, and Needed or Not needed ([CONTEXT.md](CONTEXT.md)). The List is every Frequent Item, Not needed ones labelled, plus the Occasional Items that are Needed. An Item's status and quantity change only when a command or a click changes them; nothing resets them on a schedule (a completed Order will, once Orders exist). No command deletes an Item. |
+| FR-0.20 | v0.12 | Adding an Item Kiki doesn't know creates it Occasional and Needed, with the quantity said (default 1). Adding a Not needed Item makes it Needed, at the quantity said or else its Usual quantity. FR-0.1 and FR-0.2 still hold. |
+| FR-0.21 | v0.12 | Replaces FR-0.5. "Remove", "got the" or "not this time" makes one or more Items Not needed, whatever their quantity. Removing something not on the List says so. |
+| FR-0.22 | v0.12 | A quantity change (FR-0.3) sets the quantity for the next Order only. "We usually get three tomatoes" sets the Usual quantity, and the next Order's quantity with it. |
+| FR-0.23 | v0.12 | "Make chicken frequent" makes an Item Frequent. "We don't buy beetroot any more" makes it Occasional and Not needed. |
+| FR-0.24 | v0.12 | "Call yogurt Greek yogurt" renames an Item and keeps everything else about it. |
+| FR-0.25 | v0.12 | Replaces FR-0.6. "What's on my list?" reads the Needed Items with their quantities, then says how many Frequent Items are Not needed. With nothing Needed it replies "Your list is empty." |
+| FR-0.26 | v0.12 | Replaces FR-0.7. "Clear the list" makes every Item Not needed, immediately and with no confirmation, and replies with how many Items it took off. |
+| FR-0.27 | v0.12 | The UI list shows Needed Items first, then the Not needed Frequent Items dimmed and labelled. Clicking an Item flips it between Needed and Not needed ([docs/ui.md](docs/ui.md)). |
 
 ### Non-functional requirements
 
@@ -82,6 +92,22 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | 11 | "Blorp the frim" | "Sorry, I didn't catch that.", list unchanged | FR-0.8 |
 | 12 | "Dot the eggs" (Whisper's mishearing of "got the eggs") | Eggs removed | FR-0.4 |
 
+### Scenarios (text tests, v0.12)
+
+| # | Input | Expected | Covers |
+|---|---|---|---|
+| 13 | "Add shrimp" (never heard of) | Shrimp is Occasional, Needed, quantity 1 | FR-0.20 |
+| 14 | "Add chicken" (Frequent, Not needed, usual 1) | Chicken Needed, quantity 1 | FR-0.20 |
+| 15 | "Get three tomatoes" (Frequent, Not needed, usual 2) | Tomatoes Needed, quantity 3, usual stays 2 | FR-0.20, FR-0.22 |
+| 16 | "Not chicken this time" (Frequent, Needed) | Chicken Not needed, still on the List | FR-0.19, FR-0.21 |
+| 17 | "Remove butter" (Occasional, Needed) | Butter Not needed, off the List, still known | FR-0.19, FR-0.21 |
+| 18 | "We usually get three tomatoes" (usual 2) | Usual quantity 3, quantity 3 | FR-0.22 |
+| 19 | "Make chicken frequent" (Occasional) | Chicken Frequent | FR-0.23 |
+| 20 | "We don't buy beetroot any more" (Frequent, Needed) | Beetroot Occasional, Not needed | FR-0.23 |
+| 21 | "Call yogurt Greek yogurt" | Same Item, new name, kind, status and quantities unchanged | FR-0.24 |
+| 22 | "What's on my list?" (3 Needed, 2 Frequent Not needed) | Reads the three, says two are off this time | FR-0.25 |
+| 23 | "Clear the list" (4 Needed, 2 of them Frequent) | All Not needed, the 2 Frequent still on the List, reply mentions four | FR-0.26 |
+
 ### Definition of done
 
 - **v0.1:** every v0.1 requirement has a passing test, including all 11 scenarios against the real API. `uv run --env-file .env python -m kiki.cli` runs the terminal loop and writes the turn log.
@@ -92,16 +118,16 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.9:** FR-0.16 met; FR-0.13 tests still pass; the page checked by eye in the browser in each orb state.
 - **v0.10:** FR-0.17 met; FR-0.13 and FR-0.16 tests still pass; the page checked by eye at laptop and phone widths in each orb state, with a typed command and by voice.
 - **v0.11:** FR-0.18 met; by voice, a command said within 5 s of a reply works without "hey jarvis", and talking that isn't a command in the window gets no reply.
+- **v0.12:** every v0.12 requirement has a passing test, including scenarios 13 to 23 against the real API; the tests for FR-0.5, FR-0.6 and FR-0.7 are replaced by those for FR-0.21, FR-0.25 and FR-0.26; FR-0.13 and FR-0.16 tests still pass; scenarios 13, 16 and 22 work by voice; the page checked by eye with Needed and Not needed Items. An existing `kiki.db` is not migrated: Kiki starts with an empty List.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0
 
-Ordering or any purchase, multi-turn conversation or follow-up questions, confirmation dialogs, decrementing quantities, multiple lists, voice recognition or per-person permissions, exporting or syncing the list to phones ([ADR 0014](docs/adr/0014-reject-list-export-to-phone.md)), access from other devices on the network, offline fallback, non-English speech, a camera, and real hardware.
+Ordering or any purchase, multi-turn conversation or follow-up questions, confirmation dialogs, decrementing quantities, multiple lists, voice recognition or per-person permissions, exporting or syncing the list to phones ([ADR 0014](docs/adr/0014-reject-list-export-to-phone.md)), access from other devices on the network, offline fallback, non-English speech, a camera, and real hardware. v0.12 also leaves out Orders, Groups, more than one Store, units, deleting Items, and learning which Items are Frequent from past Orders.
 
 ### Open checks
 
 - ~~openWakeWord can run as a custom Pipecat processor in front of STT.~~ Verified in v0.2: `WakeGate` in `voice.py`, covered by `test_nfr_0_1_*`.
-
 ---
 
 ## Ideas (not scheduled)
@@ -111,6 +137,9 @@ Unordered. Each becomes a version only when we decide v1, v2 and so on.
 - Fridge hardware: M5Stack CoreS3 as a thin mic, speaker and screen streaming to the laptop. Transport (WebSocket vs WebRTC) decided by ADR at that time.
 - Cart building from the list, no purchase, then read-back.
 - Ordering behind a confirmation gate (likely browser automation).
+- Orders ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md)): "order placed", after a two-step confirmation, records what was ordered. When the Order is complete, the List starts over: every Frequent Item is Needed at its Usual quantity, every Occasional Item is Not needed, and Missing Items ("the blueberries didn't come") stay Needed. Occasional Items that were never ordered can then be deleted.
+- Groups: "order my breakfast" makes a named set of Items Needed.
+- Suggest Frequent or Occasional from past Orders ("butter was in four of the last five Orders").
 - Timers, then multiple timers (first time Kiki speaks unprompted).
 - Recipe read-aloud with "next" and "repeat" (needs multi-turn).
 - Pantry tracking ("do we have eggs?", "we're out of milk").
