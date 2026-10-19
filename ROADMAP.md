@@ -30,7 +30,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.9 | **Done** (2026-10-17) | **Framer look.** The v0.4 UI, same layout and behavior, restyled with the colors, type and components in [DESIGN.md](DESIGN.md). Dark only. |
 | v0.10 | **Done** (2026-10-17) | **Speaking Orb and a calmer layout.** The Speaking Orb replaces the CSS orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)); one centered column with a docked text box, runs move to a History sheet ([docs/ui.md](docs/ui.md)). |
 | v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
-| v0.12 | Planned | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
+| v0.12 | **Active** | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
 
 ### Functional requirements
 
@@ -54,7 +54,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.16 | v0.9 | The UI takes its look from [DESIGN.md](DESIGN.md): every color in `ui.html` is a token declared once in `:root`, each token's value is in DESIGN.md, and there is no light theme. |
 | FR-0.17 | v0.10 | The orb is the vendored Speaking Orb, served by Kiki itself at `/speaking-orb.js` with its MIT notice; the page loads nothing from the network. |
 | FR-0.18 | v0.11 | For 5 seconds after Kiki finishes speaking a reply (`KIKI_FOLLOW_UP_SECS`), it listens for another command without the wake word, silently, while the UI shows Listening; it goes back to idle if nobody speaks. A follow-up is a standalone command (FR-0.9). If it isn't understood (FR-0.8), Kiki says nothing, changes nothing, and opens no new window. |
-| FR-0.19 | v0.12 | Every Item is Frequent or Occasional, and Needed or Not needed ([CONTEXT.md](CONTEXT.md)). The List is every Frequent Item, Not needed ones labelled, plus the Occasional Items that are Needed. An Item's status and quantity change only when a command or a click changes them; nothing resets them on a schedule (a completed Order will, once Orders exist). No command deletes an Item. |
+| FR-0.19 | v0.12 | Every Item has a Buying pattern, Frequent or Occasional, and a status, Needed or Not needed ([CONTEXT.md](CONTEXT.md)). The List is every Frequent Item, Not needed ones labelled, plus the Occasional Items that are Needed. An Item's status and quantity change only when a command or a click changes them; nothing resets them on a schedule (a completed Order will, once Orders exist). No command deletes an Item. |
 | FR-0.20 | v0.12 | Adding an Item Kiki doesn't know creates it Occasional and Needed, with the quantity said (default 1). Adding a Not needed Item makes it Needed, at the quantity said or else its Usual quantity. FR-0.1 and FR-0.2 still hold. |
 | FR-0.21 | v0.12 | Replaces FR-0.5. "Remove", "got the" or "not this time" makes one or more Items Not needed, whatever their quantity. Removing something not on the List says so. |
 | FR-0.22 | v0.12 | A quantity change (FR-0.3) sets the quantity for the next Order only. "We usually get three tomatoes" sets the Usual quantity, and the next Order's quantity with it. |
@@ -104,7 +104,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | 18 | "We usually get three tomatoes" (usual 2) | Usual quantity 3, quantity 3 | FR-0.22 |
 | 19 | "Make chicken frequent" (Occasional) | Chicken Frequent | FR-0.23 |
 | 20 | "We don't buy beetroot any more" (Frequent, Needed) | Beetroot Occasional, Not needed | FR-0.23 |
-| 21 | "Call yogurt Greek yogurt" | Same Item, new name, kind, status and quantities unchanged | FR-0.24 |
+| 21 | "Call yogurt Greek yogurt" | Same Item, new name, buying pattern, status and quantities unchanged | FR-0.24 |
 | 22 | "What's on my list?" (3 Needed, 2 Frequent Not needed) | Reads the three, says two are off this time | FR-0.25 |
 | 23 | "Clear the list" (4 Needed, 2 of them Frequent) | All Not needed, the 2 Frequent still on the List, reply mentions four | FR-0.26 |
 

@@ -10,7 +10,7 @@ Most Items the household buys come back Order after Order (Frequent), some only 
 ## Options considered
 - Keep one row per wanted item and delete it on remove (today): Kiki can't tell "not this time" from "never again".
 - An Item table plus a separate "next order" (Need) table with item, quantity and status: clean history, but there is only ever one next Order, so the second table is one-to-one with the first.
-- One `item` table with `kind` (frequent/occasional), `status` (needed/not_needed), `quantity` (next Order) and `usual_quantity`.
+- One `item` table with `buying_pattern` (frequent/occasional), `status` (needed/not_needed), `quantity` (next Order) and `usual_quantity`.
 
 ## Decision
 One `item` table. Remove, "not this time" and clear set `status` to `not_needed`; nothing is deleted. The List shows every Frequent Item (Not needed ones labelled) and the Occasional Items that are Needed. A new Item is Occasional and Needed. `status` and `quantity` change only when the owner changes them or an Order completes; there is no weekly cycle or scheduled reset. When Orders are added later, they are a separate record (`order`, `order_line`) written when an Order is placed. Completing one starts the List over in one transaction: Frequent Items Needed at their Usual quantity, Occasional Items Not needed, Missing Items still Needed.
@@ -19,7 +19,7 @@ One `item` table. Remove, "not this time" and clear set `status` to `not_needed`
 + Frequent Items are remembered; each Order starts from them instead of from nothing.
 + No join and no second table to keep in step for the next Order.
 + "Clear the list" can no longer lose anything (the risk noted in 0012 goes away).
-- One row mixes two lifetimes: name, kind and usual quantity last; status and quantity change all the time.
+- One row mixes two lifetimes: name, buying pattern and usual quantity last; status and quantity change all the time.
 - Two Orders can't be prepared at once (for example two Stores). If that becomes real, move `status` and `quantity` into a `next_order` table.
 - Misheard Items stay as hidden Occasional rows. Deleting them waits for Orders, when "never ordered" can be told apart.
 - The schema changes; an existing `kiki.db` is not migrated and Kiki starts with an empty List.

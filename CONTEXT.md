@@ -14,6 +14,10 @@ _Avoid_: weekly list, shopping list, cart
 A thing the household buys, such as chicken or walnuts. It stays on the List between Orders.
 _Avoid_: product, entry
 
+**Buying pattern**:
+How often the household buys an Item: Frequent or Occasional.
+_Avoid_: kind, type, category, frequency
+
 **Frequent**:
 An Item bought often. It always stays on the List, and is Needed again once an Order is complete.
 _Avoid_: constant, staple, regular, weekly
