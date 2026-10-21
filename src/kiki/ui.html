@@ -141,6 +141,14 @@
     transition: background-color 1.2s, box-shadow 1.2s;
   }
   ul.items li.changed { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--accent-blue); transition: none; }
+  ul.items li:has(.flip) { padding: 0; }
+  .flip {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+    padding: 12px 10px; border: 0; border-radius: var(--rounded-md); background: none;
+    color: inherit; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer;
+  }
+  .flip:hover { background: var(--surface-2); }
+  ul.items li.off { opacity: .45; }
   ul.items.enter li { animation: rise .6s var(--ease-out) both; animation-delay: calc(var(--i) * 35ms); }
   .name { display: inline-block; }
   .name::first-letter { text-transform: uppercase; }
@@ -321,16 +329,22 @@
   function showList(items, highlight) {
     const list = $("items");
     list.replaceChildren();
-    $("count").textContent = items.length ? `${items.length} item${items.length === 1 ? "" : "s"}` : "";
+    const needed = items.filter((item) => item.status === "needed").length;
+    $("count").textContent = items.length ? `${needed} item${needed === 1 ? "" : "s"}` : "";
     if (!items.length) {
       list.append(el("li", { class: "empty" }, "Nothing on the list yet.", el("small", {}, "Say “hey jarvis, add milk”.")));
     }
     const next = new Map();
     items.forEach((item, i) => {
       const key = item.name.toLowerCase();
-      next.set(key, item.quantity);
-      const row = el("li", { style: `--i: ${i}` }, el("span", { class: "name" }, item.name), el("span", { class: "qty" }, item.quantity > 1 ? `× ${item.quantity}` : ""));
-      if (highlight && shownItems.get(key) !== item.quantity) {
+      const off = item.status !== "needed";
+      next.set(key, `${item.quantity} ${item.status}`);
+      const button = el("button", { type: "button", class: "flip", title: off ? "Mark needed" : "Mark not needed" },
+        el("span", { class: "name" }, item.name),
+        el("span", { class: "qty" }, off ? "Not needed" : item.quantity > 1 ? `× ${item.quantity}` : ""));
+      button.addEventListener("click", () => setNeeded(item.name, off));
+      const row = el("li", { style: `--i: ${i}`, class: off ? "off" : "" }, button);
+      if (highlight && shownItems.get(key) !== next.get(key)) {
         row.classList.add("changed");
         setTimeout(() => row.classList.remove("changed"), 1500);
       }
@@ -354,12 +368,18 @@
       }
       case "remove_items": {
         const parts = [];
-        if (result.removed.length) parts.push("removed " + names(result.removed));
+        if (result.removed.length) parts.push("not needed: " + names(result.removed));
         if (result.not_found.length) parts.push("not on list: " + names(result.not_found));
         return el("span", { class: "chip" }, parts.join(" · "));
       }
       case "set_quantity":
         return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} → ${args.quantity}`);
+      case "set_usual_quantity":
+        return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} usually ${args.quantity}`);
+      case "set_buying_pattern":
+        return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} → ${args.buying_pattern}`);
+      case "rename_item":
+        return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} → ${args.new_name}`);
       case "clear_list":
         return el("span", { class: "chip" }, `cleared ${result.removed.length} item${result.removed.length === 1 ? "" : "s"}`);
       default:
@@ -466,6 +486,20 @@
       $("form-error").textContent = `Couldn't send that (${error.message}).`;
     }
   });
+
+  async function setNeeded(name, needed) {
+    $("form-error").textContent = "";
+    try {
+      const response = await fetch("/item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, needed }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      $("form-error").textContent = `Couldn't change ${name} (${error.message}).`;
+    }
+  }
 
   $("history-open").addEventListener("click", () => sheet.showModal());
   $("history-close").addEventListener("click", () => sheet.close());

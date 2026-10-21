@@ -65,7 +65,9 @@ Under "reduce motion" the sphere freezes; captions still appear.
 
 ## The list
 
-Read-only, in two columns. Title "Grocery list" with the item count ("4 items") on the right. Each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Rows that are new or changed get a blue ring for 1.5 s. Empty: "Nothing on the list yet." with a hint to say "hey jarvis, add milk".
+In two columns. Title "Grocery list" with the count of Needed items ("4 items") on the right. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
+
+Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s. Empty: "Nothing on the list yet." with a hint to say "hey jarvis, add milk".
 
 ## Run cards
 
@@ -85,13 +87,13 @@ Time and source (voice or text), total latency; Heard, Did (chips such as "added
 - v0.4: first cut. Three panels side by side (assistant, list, runs) with a CSS conic-gradient orb; the runs column grew down the page.
 - v0.9: same layout, Framer look.
 - v0.10: the Speaking Orb, one centered column with a docked text box, and the History sheet. (A first v0.10 draft put the stage and the list side by side; it read as left, right, then down, so everything moved onto one axis.)
+- v0.12: Needed and Not needed items; clicking a row flips it.
 
 ## Still open
 
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
-- **Removed items:** they vanish from the list; the run card shows what was removed. A brief strike-through could show it in the list too.
-- **Editable list:** ticking items off on screen would be a second way to change state and needs its own tests.
+- **Not needed Occasional items:** they vanish from the list; the run card shows them. A brief strike-through could show it in the list too.
 - **The M5 screen:** a much smaller layout for the fridge device; the orb alone might be the whole screen.
 
 ## Sketches

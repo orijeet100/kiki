@@ -42,12 +42,12 @@ def test_fr_0_9_single_turn_request_has_only_list_and_command(conn):
     first = seen[0]
     assert len(first) == 1  # one request, no history
     assert [p.content for p in first[0].parts] == ["add milk"]
-    assert "bread x1" in first[0].instructions
+    assert "bread x1 (occasional, needed)" in first[0].instructions
     assert turn["said"] == "Added milk."
     assert turn["tool_calls"] == [
         {
             "name": "add_items",
-            "args": {"items": [{"name": "milk", "quantity": 1}]},
+            "args": {"items": [{"name": "milk"}]},
             "result": {
                 "added": [{"name": "milk", "quantity": 1}],
                 "already_present": [],
@@ -63,29 +63,53 @@ def test_nfr_0_3_a_change_takes_one_model_request(conn):
     assert len(seen) == 1
 
 
-def test_fr_0_5_every_change_in_one_call_applies_in_order(conn):
-    tools.add_items(conn, [{"name": "milk"}, {"name": "rice"}])
+def test_fr_0_21_every_change_in_one_call_applies_in_order(conn):
+    tools.add_items(conn, [{"name": "milk"}, {"name": "rice"}, {"name": "yogurt"}])
     model, _ = scripted(
         update(
             remove=["milk"],
             add=[{"name": "bread"}],
             set_quantities=[{"name": "rice", "quantity": 2}],
-            reply="Removed milk, added bread, and rice is now two.",
+            set_usual_quantities=[{"name": "bread", "quantity": 3}],
+            set_buying_patterns=[{"name": "bread", "buying_pattern": "frequent"}],
+            renames=[{"name": "yogurt", "new_name": "Greek yogurt"}],
+            reply="Done.",
         )
     )
-    turn = agent.run_turn("take off milk, add bread, two rice", conn, model)
+    turn = agent.run_turn("a sentence with every kind of change", conn, model)
     assert [c["name"] for c in turn["tool_calls"]] == [
         "remove_items",
         "add_items",
         "set_quantity",
+        "set_usual_quantity",
+        "set_buying_pattern",
+        "rename_item",
     ]
-    assert {i["name"]: i["quantity"] for i in tools.read_list(conn)["items"]} == {
-        "rice": 2,
-        "bread": 1,
-    }
+    assert [
+        (i["name"], i["quantity"], i["buying_pattern"])
+        for i in tools.read_list(conn)["items"]
+    ] == [
+        ("rice", 2, "occasional"),
+        ("Greek yogurt", 1, "occasional"),
+        ("bread", 3, "frequent"),
+    ]
 
 
-def test_fr_0_7_clear_then_add_in_one_call(conn):
+def test_fr_0_23_buying_pattern_must_be_frequent_or_occasional(conn):
+    tools.add_items(conn, [{"name": "chicken"}])
+    model, seen = scripted(
+        update(
+            set_buying_patterns=[{"name": "chicken", "buying_pattern": "weekly"}],
+            reply="Okay.",
+        ),
+        reply(agent.DIDNT_CATCH),
+    )
+    turn = agent.run_turn("chicken is weekly", conn, model)
+    assert isinstance(seen[1][-1].parts[0], RetryPromptPart)
+    assert turn["tool_calls"] == []
+
+
+def test_fr_0_26_clear_then_add_in_one_call(conn):
     tools.add_items(conn, [{"name": "milk"}])
     model, _ = scripted(update(clear=True, add=[{"name": "eggs"}], reply="Done."))
     agent.run_turn("clear the list and add eggs", conn, model)
@@ -107,7 +131,9 @@ def test_fr_0_3_list_snapshot_does_not_change_on_retry(conn):
     assert (
         "bread x1" in seen[1][-1].instructions
     )  # the retry still sees the start state
-    assert tools.read_list(conn)["items"] == [{"name": "bread", "quantity": 2}]
+    assert [(i["name"], i["quantity"]) for i in tools.read_list(conn)["items"]] == [
+        ("bread", 2)
+    ]
 
 
 def test_fr_0_8_no_usable_reply_falls_back_to_didnt_catch(conn):

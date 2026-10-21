@@ -4,6 +4,21 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.12] - 2026-10-21
+
+List model.
+
+### Added
+- Every item has a buying pattern, Frequent or Occasional, and a status, Needed or Not needed (FR-0.19, ADR 0026, terms in CONTEXT.md). Frequent items always stay on the list; Not needed ones show dimmed and labelled.
+- A usual quantity per item: "add butter" brings a Not needed item back at its usual quantity, "get three tomatoes" sets this time only, "we usually get three tomatoes" changes the usual (FR-0.20, FR-0.22).
+- "Make chicken frequent", "we don't buy beetroot any more" and "call yogurt Greek yogurt" (FR-0.23, FR-0.24).
+- Clicking an item in the UI flips it between Needed and Not needed (`POST /item`, FR-0.27).
+
+### Changed
+- Remove, "got the" and "not this time" make an item Not needed instead of deleting it; clear makes every item Not needed (FR-0.21 and FR-0.26 replace FR-0.5 and FR-0.7). Nothing is ever deleted.
+- "What's on my list?" reads the Needed items, then only how many Frequent items are off this time (FR-0.25 replaces FR-0.6).
+- An existing `kiki.db` isn't migrated: its old table is kept as `items_before_v0_12` and Kiki starts with an empty list.
+
 ## [v0.11] - 2026-10-17
 
 Follow-up window, again.

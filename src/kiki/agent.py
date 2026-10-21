@@ -13,6 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
@@ -33,18 +34,28 @@ DIDNT_CATCH = "Sorry, I didn't catch that."
 INSTRUCTIONS = """You manage a household grocery list by voice. Replies are spoken aloud: one or two \
 short sentences, no markdown, bullets or emojis, numbers written as words ("two milks").
 
+Every item is frequent (bought often, always on the list) or occasional (on the list only while \
+needed), and needed (goes in the next order) or not needed.
+
 Rules:
 - To change the list, call update_list once with every change from the sentence and the spoken \
 reply. Each request is independent; you only know the current list below.
 - Questions about the list are answered in plain text from the current list, with no call.
 - Fix obvious speech-to-text slips ("bred" means bread). Use plain item names ("rice", not "some rice").
-- "Got the X" means it was bought: remove it. Speech-to-text often hears it as "cut", "dot" or "gut".
-- If an item is already on the list, say so and don't change it. Only change a quantity when the \
-user explicitly asks ("add another milk", "make it three milks"); compute the new number from the \
-list and put it in set_quantities.
-- Removing an item deletes it completely, whatever its quantity.
-- When asked what's on the list, read every item.
-- After clearing the list, say only how many items were removed ("Cleared five items.").
+- Adding puts the item in add, with a quantity only if the user said a number. If an item is \
+already needed, say so and don't change it.
+- Only change a quantity when the user explicitly asks ("add another milk", "make it three \
+milks"); compute the new number from the list and put it in set_quantities. "We usually get \
+three tomatoes" goes in set_usual_quantities.
+- "Remove", "not this time" and "got the X" (bought) put the item in remove: it becomes not \
+needed. Speech-to-text often hears "got the" as "cut", "dot" or "gut". Nothing is ever deleted.
+- "Make chicken frequent" goes in set_buying_patterns. "We don't buy X any more": make it \
+occasional and remove it.
+- "Call yogurt Greek yogurt" goes in renames.
+- When asked what's on the list, read every needed item, then only the number of frequent items \
+that are not needed, without naming them ("Milk, eggs and bread. Two more are off this time."). \
+With nothing needed, reply "Your list is empty."
+- After clearing the list, say only how many items were taken off ("Cleared five items.").
 - If you can't tell what the user wants, reply exactly "Sorry, I didn't catch that." in plain text."""
 
 
@@ -60,12 +71,35 @@ class Deps:
 
 class Item(BaseModel):
     name: str = Field(description="Item name as spoken, e.g. 'eggs'")
-    quantity: int = Field(default=1, ge=1)
+    quantity: int | None = Field(
+        default=None, ge=1, description="Only when the user said a number"
+    )
+
+
+class Quantity(BaseModel):
+    name: str
+    quantity: int = Field(ge=1)
+
+
+class BuyingPattern(BaseModel):
+    name: str
+    buying_pattern: Literal["frequent", "occasional"]
+
+
+class Rename(BaseModel):
+    name: str
+    new_name: str
 
 
 def _snapshot(conn: sqlite3.Connection) -> str:
     items = tools.read_list(conn)["items"]
-    return ", ".join(f"{i['name']} x{i['quantity']}" for i in items) or "(empty)"
+    return (
+        ", ".join(
+            f"{i['name']} x{i['quantity']} ({i['buying_pattern']}, {i['status'].replace('_', ' ')})"
+            for i in items
+        )
+        or "(empty)"
+    )
 
 
 def _call(ctx: RunContext[Deps], tool: str, /, **args) -> dict:
@@ -82,17 +116,23 @@ def update_list(
     reply: str,
     add: list[Item] | None = None,
     remove: list[str] | None = None,
-    set_quantities: list[Item] | None = None,
+    set_quantities: list[Quantity] | None = None,
+    set_usual_quantities: list[Quantity] | None = None,
+    set_buying_patterns: list[BuyingPattern] | None = None,
+    renames: list[Rename] | None = None,
     clear: bool = False,
 ) -> str:
     """Make every list change the user asked for, in one call, and give the spoken reply.
 
     Args:
         reply: What to say back: one short sentence (two at most), written from the current list.
-        add: Items to add. Items already on the list stay unchanged; say so in the reply.
-        remove: Items to delete completely, whatever their quantity.
-        set_quantities: New quantities for items already on the list, only when asked explicitly.
-        clear: True to remove every item.
+        add: Items to make needed. Items already needed stay unchanged; say so in the reply.
+        remove: Items to make not needed, whatever their quantity. Nothing is deleted.
+        set_quantities: Quantities for the next order, only when asked explicitly.
+        set_usual_quantities: Usual quantities, only when the user says what they usually get.
+        set_buying_patterns: Make items frequent or occasional.
+        renames: New names for existing items.
+        clear: True to make every item not needed.
     """
     # Every step is idempotent, so a retry after ModelRetry can safely re-apply them.
     if clear:
@@ -100,9 +140,20 @@ def update_list(
     if remove:
         _call(ctx, "remove_items", names=remove)
     if add:
-        _call(ctx, "add_items", items=[i.model_dump() for i in add])
+        _call(ctx, "add_items", items=[i.model_dump(exclude_none=True) for i in add])
     for change in set_quantities or []:
         _call(ctx, "set_quantity", name=change.name, quantity=change.quantity)
+    for change in set_usual_quantities or []:
+        _call(ctx, "set_usual_quantity", name=change.name, quantity=change.quantity)
+    for change in set_buying_patterns or []:
+        _call(
+            ctx,
+            "set_buying_pattern",
+            name=change.name,
+            buying_pattern=change.buying_pattern,
+        )
+    for change in renames or []:
+        _call(ctx, "rename_item", name=change.name, new_name=change.new_name)
     return reply
 
 
@@ -150,9 +201,9 @@ def warm_up() -> None:
     infer_model(model_name())
 
 
-# ponytail: one turn at a time for the whole process. Voice and the UI's text box share one
-# SQLite connection, and a household never needs two commands in parallel.
-_turn_lock = threading.Lock()
+# ponytail: one turn at a time for the whole process. Voice, the UI's text box and list clicks
+# share one SQLite connection, and a household never needs two commands in parallel.
+turn_lock = threading.Lock()
 
 
 def run_turn(
@@ -161,7 +212,7 @@ def run_turn(
     model: Model | str | None = None,
     source: str = "text",
 ) -> dict:
-    with _turn_lock:
+    with turn_lock:
         return _run_turn(command, conn, model, source)
 
 
