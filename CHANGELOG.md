@@ -5,6 +5,7 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Fixed
+- A reply after a quiet spell could lose its first words ("Milk is added to your list" played as "your list"). Windows let the idle speaker output fall asleep; Kiki now writes silence to it between sounds (FR-0.28).
 - The voice latency test (NFR-0.3) failed at about 2.2 s. The laptop was on battery, where Whisper and Piper run about 1.6 times slower; plugged in, the same code measured 1.7 s. The 0.4 s grace period from v0.8 is not part of the measured time.
 
 ### Changed

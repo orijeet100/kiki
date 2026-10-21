@@ -9,6 +9,7 @@ import asyncio
 import io
 import json
 import os
+import time
 import wave
 
 import numpy as np
@@ -28,8 +29,11 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
+from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.tests.utils import SleepFrame, run_test
+from pipecat.transports.base_output import BaseOutputTransport
+from pipecat.transports.base_transport import TransportParams
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -381,6 +385,47 @@ def voice_pipeline(conn, model=None, speaker=False):
 
     tail = [FakeSpeaker()] if speaker else []
     return Pipeline([RealTimeMic(), *voice.processors(conn, model), *tail])
+
+
+class RecordingSpeaker(BaseOutputTransport):
+    """An output device that records each write (time, silent?), paced like real playback."""
+
+    def __init__(self, **params):
+        # No end-of-stream silence, so only the mixer can fill the pause after the chime.
+        super().__init__(
+            TransportParams(
+                audio_out_enabled=True, audio_out_end_silence_secs=0, **params
+            )
+        )
+        self.writes: list[tuple[float, bool]] = []
+
+    async def start(self, frame):
+        await super().start(frame)
+        await self.set_transport_ready(frame)
+
+    async def write_audio_frame(self, frame):
+        self.writes.append(
+            (time.monotonic(), not np.any(np.frombuffer(frame.audio, np.int16)))
+        )
+        await asyncio.sleep(len(frame.audio) / 2 / self.sample_rate)
+        return True
+
+
+def test_fr_0_28_the_speaker_keeps_getting_silence_between_sounds():
+    speaker = RecordingSpeaker(audio_out_mixer=voice.KeepSpeakerAwake())
+    chime = OutputAudioRawFrame(
+        audio=voice.LISTENING_CHIME, sample_rate=voice.CHIME_RATE, num_channels=1
+    )
+    asyncio.run(
+        run_test(Pipeline([speaker]), frames_to_send=[chime, SleepFrame(sleep=2.5)])
+    )
+
+    last_sound = max(t for t, silent in speaker.writes if not silent)
+    after = [t for t, silent in speaker.writes if t > last_sound]
+    # Still writing well after the chime ended, with no gap the device could sleep in
+    # (Windows sleeps after seconds of nothing, so half a second is a generous bound).
+    assert after and after[-1] - last_sound > 1
+    assert max(np.diff([last_sound, *after])) < 0.5
 
 
 # --- real models on synthesized speech -------------------------------------------------

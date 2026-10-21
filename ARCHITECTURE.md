@@ -127,6 +127,8 @@ Measured on this laptop plugged in (2026-10-18, `test_nfr_0_3_*`: synthesized sp
 
 **Measure plugged in.** On battery the CPU slows down and Whisper and Piper take about 1.6 times as long: the same test measured `stt` ~0.9 s, `tts` ~0.2 s and `total` ~2.2 s, over NFR-0.3. Daily use is slower than the test because of `llm`: over the last 20 spoken voice turns in the real log, `stt` ~0.57 s, `llm` ~1.6 s (spoken commands are longer and chattier than the test's), `tts` ~0.09 s, `total` ~2.3 s.
 
+**The speaker never idles (FR-0.28):** Pipecat writes to the speaker only while there is sound, unless the output has a mixer. Windows lets an output that gets no data fall asleep, and waking it lost the first ~0.7 s of the next sound ("Milk is added to your list" heard as "your list" in 6 of 8 tries after a 5 to 10 s pause). `KeepSpeakerAwake` in `voice.py` is a mixer that mixes nothing in; with it Pipecat writes silence between sounds, and the reply played whole in 8 of 8 tries.
+
 **Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
 
 Only the transcript text crosses the network (to the model API). Audio, the wake model, VAD, Whisper and Piper all run on the laptop (NFR-0.2).

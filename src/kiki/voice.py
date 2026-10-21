@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from loguru import logger
+from pipecat.audio.mixers.base_audio_mixer import BaseAudioMixer
 from pipecat.audio.turn.base_turn_analyzer import BaseTurnAnalyzer, EndOfTurnState
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -125,6 +126,28 @@ def hey_jarvis_detector() -> Callable[[np.ndarray], float]:
     path = Path(openwakeword.__file__).parent / "resources/models/hey_jarvis_v0.1.onnx"
     model = Model(wakeword_model_paths=[str(path)])
     return lambda chunk: max(model.predict(chunk).values())
+
+
+class KeepSpeakerAwake(BaseAudioMixer):
+    """Mixes nothing in; having a mixer makes Pipecat write silence to the speaker between sounds.
+
+    Windows lets an audio output that gets no data fall asleep, and waking it loses the first
+    ~0.7 s of the next sound. Measured on this laptop through the mic: "Milk is added to your
+    list" played as "Your list." in 6 of 8 tries after a 5 to 10 s pause, and whole in 8 of 8
+    with silence written through the pause.
+    """
+
+    async def start(self, sample_rate: int):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def process_frame(self, frame):
+        pass
+
+    async def mix(self, audio: bytes) -> bytes:
+        return audio
 
 
 class WakeGate(FrameProcessor):
@@ -414,6 +437,7 @@ async def run() -> None:
             audio_in_enabled=True,
             audio_out_enabled=True,
             audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_mixer=KeepSpeakerAwake(),
         )
     )
     pipeline = Pipeline([transport.input(), *processors(conn), transport.output()])

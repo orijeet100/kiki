@@ -31,6 +31,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.10 | **Done** (2026-10-17) | **Speaking Orb and a calmer layout.** The Speaking Orb replaces the CSS orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)); one centered column with a docked text box, runs move to a History sheet ([docs/ui.md](docs/ui.md)). |
 | v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
 | v0.12 | **Done** (2026-10-21) | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
+| v0.13 | **Active** | **Whole replies** (from daily use). A reply after a quiet spell lost its first words ("Milk is added to your list" played as "your list"): the speaker output now gets silence between sounds, so Windows never lets it fall asleep. |
 
 ### Functional requirements
 
@@ -63,6 +64,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.25 | v0.12 | Replaces FR-0.6. "What's on my list?" reads the Needed Items with their quantities, then says how many Frequent Items are Not needed. With nothing Needed it replies "Your list is empty." |
 | FR-0.26 | v0.12 | Replaces FR-0.7. "Clear the list" makes every Item Not needed, immediately and with no confirmation, and replies with how many Items it took off. |
 | FR-0.27 | v0.12 | The UI list shows Needed Items first, then the Not needed Frequent Items dimmed and labelled. Clicking an Item flips it between Needed and Not needed ([docs/ui.md](docs/ui.md)). |
+| FR-0.28 | v0.13 | Every chime and reply plays from its first word, however long Kiki was quiet before it: the speaker output is written to continuously, silence between sounds. |
 
 ### Non-functional requirements
 
@@ -119,6 +121,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.10:** FR-0.17 met; FR-0.13 and FR-0.16 tests still pass; the page checked by eye at laptop and phone widths in each orb state, with a typed command and by voice.
 - **v0.11:** FR-0.18 met; by voice, a command said within 5 s of a reply works without "hey jarvis", and talking that isn't a command in the window gets no reply.
 - **v0.12:** every v0.12 requirement has a passing test, including scenarios 13 to 23 against the real API; the tests for FR-0.5, FR-0.6 and FR-0.7 are replaced by those for FR-0.21, FR-0.25 and FR-0.26; FR-0.13 and FR-0.16 tests still pass; scenarios 13, 16 and 22 work by voice; the page checked by eye with Needed and Not needed Items. An existing `kiki.db` is not migrated: Kiki starts with an empty List.
+- **v0.13:** FR-0.28 met; by voice, a reply after more than ten quiet seconds is heard from its first word.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0
