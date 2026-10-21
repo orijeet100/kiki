@@ -31,7 +31,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.10 | **Done** (2026-10-17) | **Speaking Orb and a calmer layout.** The Speaking Orb replaces the CSS orb ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)); one centered column with a docked text box, runs move to a History sheet ([docs/ui.md](docs/ui.md)). |
 | v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
 | v0.12 | **Done** (2026-10-21) | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
-| v0.13 | **Active** | **Whole replies** (from daily use). A reply after a quiet spell lost its first words ("Milk is added to your list" played as "your list"): the speaker output now gets silence between sounds, so Windows never lets it fall asleep. |
+| v0.13 | **Done** (2026-10-21) | **Whole replies** (from daily use). A reply after a quiet spell lost its first words ("Milk is added to your list" played as "your list"): the speaker output now gets silence between sounds, so Windows never lets it fall asleep. |
 
 ### Functional requirements
 
