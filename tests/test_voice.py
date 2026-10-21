@@ -461,7 +461,7 @@ def test_nfr_0_1_no_wake_word_nothing_transcribed(tmp_path, speak):
     assert tools.read_list(conn)["items"] == []
 
 
-VOICE_SCENARIOS = [  # ROADMAP scenarios required by the v0.2 definition of done
+VOICE_SCENARIOS = [  # ROADMAP scenarios required by the v0.2 and v0.12 definitions of done
     ("1", [], "Add bread and eggs.", {"bread": 1, "egg": 1}),
     ("2", [("bread", 1)], "Add bread.", {"bread": 1}),
     (
@@ -479,6 +479,25 @@ VOICE_SCENARIOS = [  # ROADMAP scenarios required by the v0.2 definition of done
     ("8", [("bread", 1), ("milk", 1), ("eggs", 1)], "What's on my list?", None),
     ("10", [("bread", 1), ("milk", 1), ("rice", 1)], "Clear the list.", {}),
     ("11", [("rice", 1)], "Blorp the frim.", {"rice": 1}),
+    ("13", [], "Add shrimp.", {"shrimp": 1}),
+    (
+        "16",
+        [("chicken", 1, "frequent"), ("rice", 1)],
+        "Not chicken this time.",
+        {"rice": 1},
+    ),
+    (
+        "22",
+        [
+            ("bread", 1),
+            ("milk", 1),
+            ("eggs", 1),
+            ("chicken", 1, "frequent", "not needed"),
+            ("walnuts", 1, "frequent", "not needed"),
+        ],
+        "What's on my list?",
+        None,
+    ),
 ]
 
 
@@ -495,11 +514,21 @@ def test_scenario_by_voice(
 
     monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
     conn = connect(str(tmp_path / "voice.db"))
-    tools.add_items(conn, [{"name": n, "quantity": q} for n, q in seed])
-    before = {
-        tools.normalize(i["name"]): i["quantity"]
-        for i in tools.read_list(conn)["items"]
-    }
+    for name, quantity, *pattern_and_status in seed:
+        tools.add_items(conn, [{"name": name, "quantity": quantity}])
+        if pattern_and_status:
+            tools.set_buying_pattern(conn, name, pattern_and_status[0])
+        if pattern_and_status[1:]:
+            tools.remove_items(conn, [name])
+
+    def needed():
+        return {
+            tools.normalize(i["name"]): i["quantity"]
+            for i in tools.read_list(conn)["items"]
+            if i["status"] == "needed"
+        }
+
+    before = needed()
     audio = [
         *silence(0.5),
         *mic(speak("Hey Jarvis.")),
@@ -515,17 +544,14 @@ def test_scenario_by_voice(
             frames_to_send=[*audio, SleepFrame(sleep=8)],
         )
     )
-    state = {
-        tools.normalize(i["name"]): i["quantity"]
-        for i in tools.read_list(conn)["items"]
-    }
+    state = needed()
     said = " ".join(f.text for f in down if isinstance(f, TTSTextFrame)).lower()
     assert said, "Kiki said nothing"
     heard = [
         t["heard"] for t in events.recent_turns(path=str(tmp_path / "turns.jsonl"))
     ]
     assert state == (before if expected is None else expected), (heard, said, state)
-    if number == "8":
+    if number in ("8", "22"):
         assert all(n in said for n in ("bread", "milk", "egg")), said
 
 

@@ -51,3 +51,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0023](0023-grace-period-after-a-finished-sounding-pause.md) | Wait a short grace period after a pause sounds finished | Accepted |
 | [0024](0024-vendor-the-speaking-orb.md) | The orb is the Speaking Orb web component, vendored as one file | Accepted |
 | [0025](0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md) | Listen for five seconds after each reply, and stay quiet if what's heard isn't a command | Accepted |
+| [0026](0026-one-item-table-holds-the-next-order-state.md) | One item table holds both the item and its state for the next order | Accepted |

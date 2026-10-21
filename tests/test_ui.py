@@ -64,7 +64,14 @@ def test_fr_0_13_live_events_for_a_typed_command(server):
     events = read_events(stream)
     snapshot = next(events)
     assert snapshot["type"] == "snapshot"
-    assert snapshot["items"] == [{"name": "bread", "quantity": 1}]
+    assert snapshot["items"] == [
+        {
+            "name": "bread",
+            "quantity": 1,
+            "buying_pattern": "occasional",
+            "status": "needed",
+        }
+    ]
     assert snapshot["turns"] == []
 
     assert post_command(server, "add two milks").status == 202
@@ -79,9 +86,9 @@ def test_fr_0_13_live_events_for_a_typed_command(server):
     assert seen[0]["value"] == "thinking"
     turn, new_list = seen[1], seen[2]
     assert turn["heard"] == "add two milks" and turn["said"] == "Added two milks."
-    assert new_list["items"] == [
-        {"name": "bread", "quantity": 1},
-        {"name": "milk", "quantity": 2},
+    assert [(i["name"], i["quantity"]) for i in new_list["items"]] == [
+        ("bread", 1),
+        ("milk", 2),
     ]
 
 
@@ -94,6 +101,41 @@ def test_fr_0_13_a_new_page_shows_past_runs(server):
     snapshot = next(read_events(request(server, "GET", "/events")))
     assert [t["heard"] for t in snapshot["turns"]] == ["add two milks"]
     assert {i["name"] for i in snapshot["items"]} == {"bread", "milk"}
+
+
+def post_item(server, body, content_type="application/json"):
+    return request(
+        server, "POST", "/item", json.dumps(body), {"Content-Type": content_type}
+    )
+
+
+def test_fr_0_27_a_click_flips_an_item_and_the_page_gets_the_new_list(server):
+    events = read_events(request(server, "GET", "/events"))
+    next(events)  # snapshot
+
+    response = post_item(server, {"name": "bread", "needed": False})
+    assert response.status == 200
+    assert json.loads(response.read()) == {"removed": ["bread"], "not_found": []}
+    assert next(events) == {"type": "list", "items": []}  # Occasional: off the List
+
+    assert post_item(server, {"name": "bread", "needed": True}).status == 200
+    assert [(i["name"], i["status"]) for i in next(events)["items"]] == [
+        ("bread", "needed")
+    ]
+
+
+@pytest.mark.parametrize(
+    "body", [{"name": "bread"}, {"name": "bread", "needed": "yes"}, {"needed": True}]
+)
+def test_fr_0_27_rejects_a_malformed_click(server, body):
+    assert post_item(server, body).status == 400
+
+
+def test_nfr_0_6_rejects_a_click_that_is_not_json(server):
+    assert (
+        post_item(server, {"name": "bread", "needed": False}, "text/plain").status
+        == 415
+    )
 
 
 def test_nfr_0_6_rejects_requests_addressed_to_another_host(server):

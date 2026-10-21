@@ -19,6 +19,7 @@ v0.2 (voice: voice.py, a Pipecat pipeline around the same agent)
 v0.4 (UI: ui.py, started by voice.py or on its own)
   events.publish ──> ui.py (http.server, Server-Sent Events) ──> browser on 127.0.0.1:8765
   browser text box ──> POST /command ──> run_turn (same path as voice)
+  list click       ──> POST /item    ──> add_items / remove_items (no model, v0.12)
 ```
 
 | Layer | Choice | ADR |
@@ -63,18 +64,18 @@ tests/
 
 1. A command arrives as text (typed in v0.1, transcribed in v0.2).
 2. `run_turn` snapshots the list once, then calls `agent.run_sync` with only the command. The model sees the static instructions, the snapshot and the command. No previous turns ([ADR 0009](docs/adr/0009-single-turn-commands.md)).
-3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, clear)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply.
+3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, set_usual_quantities, set_buying_patterns, renames, clear)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities, usual quantities, buying patterns, renames), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply.
 4. `run_turn` returns a `turn` event. `events.py` appends it to the log. The caller prints or speaks `said`.
 
 **Why the snapshot is taken once:** Pydantic AI re-renders instructions on every model request inside a run, retries included. A live list read after a retry would show "bread x2", and the model would bump "add another bread" again (found by scenario 3 in v0.1).
 
-**Why retries are safe:** every step of `update_list` is idempotent (adding a present item is a no-op, removing a missing item is a no-op, clearing and setting a quantity are absolute), so re-applying a call after a retry changes nothing twice.
+**Why retries are safe:** every step of `update_list` is idempotent (adding a Needed item is a no-op, removing a Not needed or missing item is a no-op, a rename that already happened finds nothing, clearing and every setting are absolute), so re-applying a call after a retry changes nothing twice.
 
 ### Guards (all Pydantic AI built-ins)
 
 | Guard | What happens |
 |---|---|
-| Argument validation | `update_list` arguments are typed (`Item.quantity >= 1`). Invalid arguments never reach `tools.py`; the model gets a retry prompt. |
+| Argument validation | `update_list` arguments are typed (quantities `>= 1`, `buying_pattern` is `frequent` or `occasional`). Invalid arguments never reach `tools.py`; the model gets a retry prompt. |
 | Tool errors | A tool result with an `error` key is raised as `ModelRetry`, so the model sees the message and can correct itself. The call is still logged. |
 | Output guard | `spoken_style` output validator rejects markdown, bullets, underscores and digits with a retry, for plain-text replies and for the `reply` of `update_list` (FR-0.10). Empty replies are retried by Pydantic AI itself. |
 | Retries | `retries=2`. They also bound the number of model requests per turn. |
@@ -96,7 +97,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 **Model client:** built per turn with `infer_model`. `warm_up()` builds one at startup (voice, terminal, UI) to pay the one-time cost of about three seconds before the first command. A client must not be cached across turns: its connections belong to the event loop of the thread that first used it, and a turn on another thread (the UI and voice both use worker threads) then stalls until the request timeout. That cost 11 s per turn until v0.4.
 
-**One turn at a time:** `run_turn` holds a process-wide lock, so a typed command and a spoken one never use the SQLite connection at the same time.
+**One turn at a time:** `run_turn` holds a process-wide lock (`agent.turn_lock`), so a typed command, a spoken one and a list click never use the SQLite connection at the same time.
 
 ## Voice loop (v0.2)
 
@@ -138,14 +139,15 @@ Only the transcript text crosses the network (to the model API). Audio, the wake
 | `GET /speaking-orb.js` | the vendored orb script ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)) |
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
+| `POST /item` | `{"name": "...", "needed": true}` → 200 with the tool result; a click on the list (FR-0.27). Runs `add_items` or `remove_items` under the turn lock, publishes a `list` event, and is not a turn: no model, nothing in the turn log |
 
-The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns, and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
+The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns (Needed items first, then Not needed Frequent items dimmed; a click flips one), and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
 - Binds to 127.0.0.1 only (NFR-0.6).
 - Rejects requests whose `Host` isn't `127.0.0.1` or `localhost` (blocks DNS rebinding).
-- `POST /command` requires `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
-- Commands are 1 to 200 characters.
+- `POST /command` and `POST /item` require `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
+- Commands and item names are 1 to 200 characters; `needed` must be `true` or `false`.
 
 **One Kiki at a time (FR-0.15):** the voice loop and `kiki.ui` bind the UI port first. On Windows the server doesn't set `SO_REUSEADDR` (which there would let a second process share the port), so a second copy fails with "Kiki is already running" before loading any models. Two copies used to both answer every command.
 
@@ -155,16 +157,23 @@ The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: t
 
 ## Data model
 
-One table, `items`:
+One table, `items`: both the Item and its state for the next Order ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). Nothing is ever deleted.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | integer primary key | |
 | `name` | text | As the user said it ("eggs") |
 | `normalized_name` | text, unique | Lowercase, singular ("egg"). Used for matching |
-| `quantity` | integer, default 1 | |
+| `buying_pattern` | `frequent` or `occasional`, default `occasional` | Frequent items always stay on the List |
+| `status` | `needed` or `not_needed`, default `needed` | Changes only by command or click; nothing resets it on a schedule |
+| `quantity` | integer ≥ 1, default 1 | For the next Order |
+| `usual_quantity` | integer ≥ 1, default 1 | A new item's first quantity; re-adding uses it |
 | `created_at` | text (ISO 8601) | |
 | `updated_at` | text (ISO 8601) | |
+
+**The List** is every Frequent item plus the Needed Occasional ones, Needed first (`read_list`). A Not needed Occasional item is hidden but still known, so "add butter" brings it back at its usual quantity.
+
+**Files from before v0.12:** `db.connect` renames an `items` table without `buying_pattern` to `items_before_v0_12` and starts an empty List. The old rows are kept, not migrated.
 
 ## Tools
 
@@ -172,11 +181,14 @@ All tools are plain functions taking and returning JSON-compatible values ([ADR 
 
 | Tool | Input | Output | Notes |
 |---|---|---|---|
-| `add_items` | `items: [{name, quantity?}]` | `{added: [...], already_present: [...]}` | Never changes the quantity of an existing item (FR-0.2) |
-| `set_quantity` | `name, quantity` | `{name, quantity}` or `{not_found: name}` | For explicit changes like "add another milk" or "make it three" (FR-0.3). The model computes the new number from the list snapshot |
-| `remove_items` | `names: [string]` | `{removed: [...], not_found: [...]}` | Deletes the whole item regardless of quantity (FR-0.5) |
-| `read_list` | none | `{items: [{name, quantity}]}` | Builds the snapshot; not offered to the model, since the snapshot already answers questions |
-| `clear_list` | none | `{removed: [{name, quantity}]}` | No confirmation. The removed items land in the turn log ([ADR 0012](docs/adr/0012-clear-list-without-confirmation.md)) |
+| `add_items` | `items: [{name, quantity?}]` | `{added: [...], already_present: [...]}` | A new name is Occasional and Needed. A Not needed item becomes Needed at the quantity said, else its usual. A Needed item is left alone (FR-0.2, FR-0.20) |
+| `set_quantity` | `name, quantity` | `{name, quantity}` or `{not_found: name}` | The next Order's quantity, for explicit changes like "make it three"; also makes the item Needed (FR-0.3, FR-0.22). The model computes the new number from the list snapshot |
+| `set_usual_quantity` | `name, quantity` | `{name, usual_quantity}` or `{not_found: name}` | "We usually get three tomatoes": usual and next quantity (FR-0.22) |
+| `set_buying_pattern` | `name, buying_pattern` | `{name, buying_pattern}` or `{not_found: name}` | Frequent or Occasional (FR-0.23) |
+| `rename_item` | `name, new_name` | `{name, new_name}`, `{not_found: name}` or `{error}` | Same item, new name; an error if the new name is another item (FR-0.24) |
+| `remove_items` | `names: [string]` | `{removed: [...], not_found: [...]}` | Makes items Not needed, whatever the quantity; already Not needed counts as not found (FR-0.21) |
+| `read_list` | none | `{items: [{name, quantity, buying_pattern, status}]}` | The List. Builds the snapshot; not offered to the model, since the snapshot already answers questions (FR-0.19) |
+| `clear_list` | none | `{removed: [{name, quantity}]}` | Every item Not needed, no confirmation; returns the ones that were Needed (FR-0.26, [ADR 0012](docs/adr/0012-clear-list-without-confirmation.md)) |
 
 ## Events
 
@@ -221,7 +233,7 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
 | `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
 
-**`list`**, live only: the whole list after every turn, `{"type": "list", "items": [{"name", "quantity"}]}`.
+**`list`**, live only: the whole List after every turn and every list click, `{"type": "list", "items": [{"name", "quantity", "buying_pattern", "status"}]}`.
 
 **`snapshot`**, sent once to each UI connection: `{"type": "snapshot", "state", "items", "turns"}` with the last 50 turns from the log.
 
@@ -231,7 +243,7 @@ Adding a field is fine. Renaming or removing one needs an ADR.
 
 ## Instructions
 
-The source of truth is `INSTRUCTIONS` in `agent.py`, plus a dynamic line "Current list at the start of this request: ...". In short: speak in one or two short sentences with numbers as words; make every change in one `update_list` call; answer questions in plain text; fix obvious speech-to-text slips ("got the X" is often heard as "cut", "dot" or "gut"); never change an existing item unless the quantity change is explicit; remove means delete completely; read every item when asked; after clearing say only the count; when unsure reply exactly "Sorry, I didn't catch that." and call no tools.
+The source of truth is `INSTRUCTIONS` in `agent.py`, plus a dynamic line "Current list at the start of this request: ...", one entry per List item: `bread x1 (frequent, needed)`. In short: speak in one or two short sentences with numbers as words; make every change in one `update_list` call; answer questions in plain text; fix obvious speech-to-text slips ("got the X" is often heard as "cut", "dot" or "gut"); every item is frequent or occasional and needed or not needed; add with a quantity only when a number was said; never change a Needed item unless the quantity change is explicit; "remove", "not this time" and "got the X" make an item not needed, never delete it; "we don't buy X any more" makes it occasional and not needed; when asked, read the Needed items, then only the count of Not needed Frequent ones; after clearing say only the count; when unsure reply exactly "Sorry, I didn't catch that." and call no tools.
 
 ## Configuration
 
@@ -275,7 +287,7 @@ Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
-- `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios to the real agent. First run downloads the Whisper and Piper models.
+- `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios and v0.12 scenarios 13, 16 and 22 to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
-- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, localhost binding, and the Host, content-type and length checks.
-- `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 11 short Haiku turns, well under a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.
+- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, list clicks (`POST /item`), localhost binding, and the Host, content-type and length checks.
+- `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 23 short Haiku turns, about a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

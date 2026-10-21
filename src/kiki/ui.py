@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from kiki import events, tools
-from kiki.agent import run_turn, warm_up
+from kiki.agent import run_turn, turn_lock, warm_up
 from kiki.db import connect
 
 HOST = "127.0.0.1"
@@ -32,6 +32,18 @@ def send_command(text: str, conn: sqlite3.Connection, model=None) -> None:
     turn = run_turn(text, conn, model, source="text")
     events.record_turn(turn, tools.read_list(conn)["items"])
     events.set_state("error" if turn["error"] else "idle")
+
+
+def set_needed(name: str, needed: bool, conn: sqlite3.Connection) -> dict:
+    """A click on the list (FR-0.27): the same tools as a spoken add or remove, no model."""
+    with turn_lock:
+        if needed:
+            result = tools.add_items(conn, [{"name": name}])
+        else:
+            result = tools.remove_items(conn, [name])
+        items = tools.read_list(conn)["items"]
+    events.publish({"type": "list", "items": items})
+    return result
 
 
 def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHandler]:
@@ -59,7 +71,7 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
         def do_POST(self):
             if not self._local_host():
                 return self.send_error(403)
-            if self.path != "/command":
+            if self.path not in ("/command", "/item"):
                 return self.send_error(404)
             # A JSON content type can't be sent cross-site without a CORS preflight we never
             # answer, so other web pages can't post commands.
@@ -67,11 +79,17 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 return self.send_error(415)
             length = int(self.headers.get("Content-Length") or 0)
             try:
-                text = json.loads(self.rfile.read(length))["text"].strip()
+                body = json.loads(self.rfile.read(length))
+                text = body["text" if self.path == "/command" else "name"].strip()
             except (ValueError, KeyError, TypeError, AttributeError):
                 return self.send_error(400)
             if not text or len(text) > MAX_COMMAND_CHARS:
                 return self.send_error(400)
+            if self.path == "/item":
+                if not isinstance(body.get("needed"), bool):
+                    return self.send_error(400)
+                result = set_needed(text, body["needed"], conn)
+                return self._send(200, "application/json", json.dumps(result).encode())
             threading.Thread(
                 target=send_command, args=(text, conn, model), daemon=True
             ).start()
