@@ -27,7 +27,7 @@ v0.4 (UI: ui.py, started by voice.py or on its own)
 | Orchestration | Pipecat | [0002](docs/adr/0002-use-pipecat-for-voice-orchestration.md) |
 | Wake word | openWakeWord, built-in "hey jarvis", runs before STT | [0003](docs/adr/0003-gate-audio-with-local-wake-word.md) |
 | Audio in/out (v0.2) | Pipecat `LocalAudioTransport`, Python owns mic and speaker | [0011](docs/adr/0011-python-owns-the-mic-in-v0.md) |
-| STT | faster-whisper `base.en` with a grocery-vocabulary prompt, int8 on CPU | [0004](docs/adr/0004-run-stt-and-tts-locally.md), [0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md) |
+| STT | faster-whisper `base.en` with a grocery-vocabulary prompt, int8 on CPU, 8 threads | [0004](docs/adr/0004-run-stt-and-tts-locally.md), [0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md) |
 | Agent framework | Pydantic AI: tool loop, argument validation, retries, output guard, usage limit | [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
 | Brain | Any Pydantic AI model string, default `anthropic:claude-haiku-5-5` | [0005](docs/adr/0005-use-claude-haiku-by-default.md), [0015](docs/adr/0015-use-pydantic-ai-for-the-agent.md) |
 | TTS | Piper, voice `en_US-lessac-medium` (Kokoro if Piper sounds too robotic) | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
@@ -108,22 +108,24 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 | `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.4) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per session) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. After each spoken reply (`BotStoppedSpeakingFrame`) it opens again with no wake word and no chime, for `KIKI_FOLLOW_UP_SECS` (5 s), passing audio only from 0.3 s after playback so Kiki's own voice isn't heard; `follow_up` says which kind of session it is ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md), FR-0.18). It doesn't reopen over an interrupted reply. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
 | `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished and still silent `KIKI_END_GRACE_SECS` (0.4 s) later, or after `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). Speech within the grace period, like the next item after a list comma, keeps the same command ([ADR 0023](docs/adr/0023-grace-period-after-a-finished-sounding-pause.md)). |
-| `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)). |
+| `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)), on `KIKI_WHISPER_THREADS` (8) CPU threads. Pipecat's service doesn't expose the thread count, so `processors()` subclasses it to pass one. |
 | `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. A follow-up the agent didn't catch (`DIDNT_CATCH`) is logged with `said` empty and not spoken, so no new window opens (FR-0.18). |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -7 dBFS by default (`KIKI_CHIME_VOLUME`; -10 dBFS went unnoticed, -3 dBFS was too loud). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
 
-**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.66 s after the last word for a finished-sounding sentence (0.2 s pause, ~60 ms check, 0.4 s grace). `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
+**Voice latency fields** in the `turn` event: `stt` = end of speech → transcript; `llm` = agent run; `tts` = reply ready → first audio; `total` = end of speech → first audio (NFR-0.3). "End of speech" is when `EndOfTurnDetector` decides the command is finished: about 0.66 s after the last word for a finished-sounding sentence (0.2 s pause, ~60 ms check, 0.4 s grace). So the grace period is not in `total`; from the last word, a person waits about 0.66 s more than `total`. `python -m kiki.latency [n]` prints the medians over the last n voice turns from the log.
 
-Measured on this laptop (v0.3, synthesized speech, CPU only):
+Measured on this laptop plugged in (2026-10-18, `test_nfr_0_3_*`: synthesized speech, CPU only):
 
 | Stage | Median |
 |---|---|
-| `stt` (Whisper `base.en`) | ~0.55 s |
-| `llm` (one request: questions ~0.75 s, changes ~0.9–1.2 s) | ~0.9 s |
+| `stt` (Whisper `base.en`, 8 threads; Whisper itself is ~0.37 s of it, ~0.52 s on 4 threads) | ~0.45 s |
+| `llm` (one request; varies ~0.2 s from run to run) | ~1.0 s |
 | `tts` (Piper first audio) | ~0.08 s |
 | `total` | **~1.5 s** (v0.2 was ~3.0 s) |
+
+**Measure plugged in.** On battery the CPU slows down and Whisper and Piper take about 1.6 times as long: the same test measured `stt` ~0.9 s, `tts` ~0.2 s and `total` ~2.2 s, over NFR-0.3. Daily use is slower than the test because of `llm`: over the last 20 spoken voice turns in the real log, `stt` ~0.57 s, `llm` ~1.6 s (spoken commands are longer and chattier than the test's), `tts` ~0.09 s, `total` ~2.3 s.
 
 **Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
 
@@ -262,6 +264,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_END_GRACE_SECS` | `0.4` | After a pause sounds finished, how long to wait for more words before closing (list commas) |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
 | `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
+| `KIKI_WHISPER_THREADS` | `8` | CPU threads for Whisper, one per core of this laptop. faster-whisper's own default is 4, about 0.15 s slower; more threads than cores is slower again |
 | `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
