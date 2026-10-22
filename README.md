@@ -2,7 +2,7 @@
 
 A voice assistant for the kitchen. Say the wake word, say a command ("add bread and two milks"), and Kiki updates the household grocery list and answers in one short spoken sentence.
 
-It will live on the fridge as a small device (M5Stack CoreS3) that streams audio to a laptop at home, where all the real work happens. v0 runs entirely on the laptop.
+It lives on the fridge as an M5Stack Tab5: a touchscreen, mic and speaker that streams to a laptop at home, where all the real work happens. It also runs on the laptop alone.
 
 ## Run it
 
@@ -26,6 +26,23 @@ uv run --env-file .env python -m kiki.ui
 ```
 
 The UI alone, with a text box. `python -m kiki.cli` is the plain terminal version. The first voice start downloads the Whisper and Piper models (a few hundred MB).
+
+## Run it on the Tab5
+
+The Tab5 is only a screen, mic and speaker for the laptop ([ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md)). Once: install [arduino-cli](https://arduino.github.io/arduino-cli/) with M5Stack's board package and the M5Unified and M5GFX libraries, copy `device/stream/secrets.h.example` to `secrets.h` with your Wi-Fi and the laptop's IP, plug the Tab5 in and flash it:
+
+```bash
+arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream
+```
+
+Then, on the laptop, Kiki on the Tab5's mic and speaker, and the UI streamed to its screen (Google Chrome must be installed):
+
+```powershell
+$env:KIKI_MIC="tab5"; $env:KIKI_SPEAKER="tab5"; uv run --env-file .env python -m kiki.voice
+uv run python -m kiki.screen
+```
+
+Say "hey jarvis" to the Tab5, wait for the chime, say a command. Drag the bar along the bottom of its screen for the volume; it starts at 5%. Details, ports and what was learned: [ARCHITECTURE.md](ARCHITECTURE.md#tab5-v014).
 
 ## Why
 

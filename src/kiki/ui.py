@@ -2,9 +2,10 @@
 standard library only (ADR 0020, ADR 0024).
 
 `python -m kiki.ui` serves the page with a text box; `python -m kiki.voice` serves it too.
-Bound to 127.0.0.1 only (NFR-0.6).
+Bound to 127.0.0.1 unless KIKI_UI_HOST opens it to the home network for the Tab5 (NFR-0.7).
 """
 
+import ipaddress
 import json
 import os
 import queue
@@ -18,7 +19,9 @@ from kiki import events, tools
 from kiki.agent import run_turn, turn_lock, warm_up
 from kiki.db import connect
 
-HOST = "127.0.0.1"
+# KIKI_UI_HOST=0.0.0.0 lets the Tab5 reach the UI over the home network (ADR 0027).
+# ponytail: no password on it yet; add a shared secret before Kiki runs unattended.
+HOST = os.environ.get("KIKI_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("KIKI_UI_PORT", "8765"))
 PAGE = (Path(__file__).parent / "ui.html").read_bytes()
 ORB = (Path(__file__).parent / "speaking-orb.js").read_bytes()  # ADR 0024
@@ -51,13 +54,20 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
         def log_message(self, *args):  # keep the terminal for Kiki's own output
             pass
 
-        def _local_host(self) -> bool:
-            # Blocks DNS rebinding: only accept requests addressed to this machine by name.
+        def _host_is_allowed(self) -> bool:
+            # Blocks DNS rebinding: a request must be addressed to "localhost" or to an IP
+            # address (the Tab5 uses the laptop's), never to some other site's host name.
             host = self.headers.get("Host", "").rsplit(":", 1)[0]
-            return host in {"127.0.0.1", "localhost"}
+            if host == "localhost":
+                return True
+            try:
+                ipaddress.ip_address(host)
+                return True
+            except ValueError:
+                return False
 
         def do_GET(self):
-            if not self._local_host():
+            if not self._host_is_allowed():
                 return self.send_error(403)
             if self.path == "/":
                 self._send(200, "text/html; charset=utf-8", PAGE)
@@ -69,7 +79,7 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 self.send_error(404)
 
         def do_POST(self):
-            if not self._local_host():
+            if not self._host_is_allowed():
                 return self.send_error(403)
             if self.path not in ("/command", "/item"):
                 return self.send_error(404)

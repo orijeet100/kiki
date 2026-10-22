@@ -8,7 +8,7 @@ Watching Kiki work, at a glance from across the kitchen: what state it's in, wha
 
 ## Already decided
 
-- Runs in a browser on the laptop, localhost only (NFR-0.6).
+- Runs in a browser on the laptop, localhost only (NFR-0.7). The Tab5 on the fridge shows this same page, streamed from the laptop (FR-0.31).
 - Driven by Kiki's own `state`, `turn` and `list` events ([ARCHITECTURE.md](../ARCHITECTURE.md#ui-v04)).
 - One HTML file plus the vendored Speaking Orb script; nothing loaded from the network ([ADR 0020](adr/0020-ui-over-server-sent-events.md), [ADR 0024](adr/0024-vendor-the-speaking-orb.md)).
 - Dark only, Framer palette ([DESIGN.md](../DESIGN.md#kiki-overrides)).
@@ -94,7 +94,7 @@ Time and source (voice or text), total latency; Heard, Did (chips such as "added
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
 - **Not needed Occasional items:** they vanish from the list; the run card shows them. A brief strike-through could show it in the list too.
-- **The M5 screen:** a much smaller layout for the fridge device; the orb alone might be the whole screen.
+- **The M5 screen:** the Tab5 (720×1280) shows this page as it is, streamed from the laptop (v0.14, [ADR 0028](adr/0028-stream-the-real-ui-page-to-the-tab5.md)), with an on-screen keyboard and its own volume bar along the bottom. A layout drawn natively on the Tab5 is being tried.
 
 ## Sketches
 
