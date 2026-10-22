@@ -43,7 +43,7 @@ from pipecat.workers.runner import WorkerRunner
 from kiki import tools, ui
 from kiki.agent import DIDNT_CATCH, run_turn, warm_up
 from kiki.db import connect
-from kiki.events import record_turn, set_state
+from kiki.events import current_state, record_turn, set_state
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
@@ -59,6 +59,9 @@ LISTEN_TIMEOUT_SECS = float(os.environ.get("KIKI_LISTEN_TIMEOUT_SECS", "6"))
 FOLLOW_UP_SECS = float(os.environ.get("KIKI_FOLLOW_UP_SECS", "5"))
 # The end of Kiki's own reply can still be in the room when playback ends; don't listen to it.
 ECHO_GUARD_SECS = 0.3
+# A command that ends with no words (a cough, noise after "hey jarvis") gets no transcript, so
+# nothing would end its "thinking"; Whisper answers well within this.
+NO_WORDS_SECS = 3.0
 # A pause this long makes Smart Turn check whether the sentence sounds finished (ADR 0021).
 PAUSE_SECS = float(os.environ.get("KIKI_PAUSE_SECS", "0.2"))
 # Silence that ends a command even if it sounded unfinished (someone stopped mid-sentence).
@@ -436,13 +439,18 @@ class Brain(FrameProcessor):
         self._speech_ended = time.monotonic()
         self._waiting_for_speech: tuple[dict, float] | None = None
         self._last_error = False
+        self._no_words_check: asyncio.Task | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, VADUserStoppedSpeakingFrame):
+        if isinstance(frame, VADUserStoppedSpeakingFrame):  # one per command
             self._speech_ended = time.monotonic()
+            self._no_words_check = self.create_task(self._idle_if_no_words())
         elif isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            if self._no_words_check:
+                await self.cancel_task(self._no_words_check)
+                self._no_words_check = None
             await self._answer(frame.text.strip())
             return
         elif isinstance(frame, BotStartedSpeakingFrame):
@@ -452,6 +460,12 @@ class Brain(FrameProcessor):
         elif isinstance(frame, BotStoppedSpeakingFrame):
             set_state("error" if self._last_error else "idle")
         await self.push_frame(frame, direction)
+
+    async def _idle_if_no_words(self):
+        await asyncio.sleep(NO_WORDS_SECS)
+        self._no_words_check = None
+        if current_state()["value"] == "thinking":
+            set_state("idle")
 
     async def _answer(self, text: str):
         if (

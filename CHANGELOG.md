@@ -4,6 +4,17 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.15] - 2026-10-22
+
+Native Tab5 UI.
+
+### Added
+- A native UI on the Tab5 (`device/kiki`, ADR 0033, supersedes the streamed page of ADR 0028): LVGL with Inter text and the Speaking Orb's particles ported to the device, at ~40 fps (~36 fps speaking), fed by Kiki's events. Build with `device/kiki/build.ps1`.
+
+### Fixed
+- A command with no words (noise after "hey jarvis") left Kiki "thinking" until the next command; it now goes back to idle after 3 s (FR-0.13).
+- The Tab5's speaker could keep its mic paused for good when a part chunk of audio was left over; it is now dropped after 200 ms (`device/stream`, `device/kiki`).
+
 ## [v0.14] - 2026-10-21
 
 Tab5 on the fridge.

@@ -1,6 +1,6 @@
 # 0028. The Tab5 shows the real UI page, rendered by a headless Chrome on the laptop and streamed as JPEG frames
 
-- Status: Accepted
+- Status: Superseded by 0033
 - Date: 2026-10-21
 - Related: FR-0.31, FR-0.32, FR-0.13, ADR 0027
 
