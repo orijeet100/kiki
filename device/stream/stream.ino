@@ -30,7 +30,7 @@ static constexpr size_t SPK_START_BYTES = SPK_SAMPLES * 2 * 4;  // start once 16
 // runs at fixed settings where a full-scale sample comes out just under the speaker's digital
 // range (2 x boost 8 x 255^2 x 255^2 / 2^36 = 0.98), so nothing can clip. Its default boost of 4
 // stopped at half the range, too quiet; the speaker chip's own volume is already at maximum.
-// Starts near silent; "vol" is a new setting so no makeLouderAtVolume level from before carries over.
+// Starts near silent; "vol" is a new setting so no louder level from before carries over.
 static constexpr uint8_t DEFAULT_VOLUME = 13, MAX_VOLUME = 255;  // 13 = 5%
 static constexpr int BAR_Y = H - 80, TRACK_X = 170, TRACK_W = W - 170 - 120;
 
@@ -116,7 +116,7 @@ void startMic() {
 
 // ---------- speaker ----------
 
-// Makes speech makeLouderAtVolume without clipping: Piper's loudest syllables already reach full scale, so
+// Makes speech louder without clipping: Piper's loudest syllables already reach full scale, so
 // the quiet parts are lifted instead. A 2x boost (+6 dB), then a limiter that pulls any sample
 // over LIMIT back down at once (the peak follower includes the sample itself, so nothing gets
 // past) and lets go over ~60 ms. Then the volume bar. Can sound slightly squashed; that's the
@@ -202,6 +202,7 @@ void playKikiAudioTask(void *) {
       playing = false;
       if (millis() - lastData < 30) gaps++;  // ran dry with more on the way
     }
+    if (count && count < SPK_SAMPLES * 2 && millis() - lastData > 200) count = 0;  // a part chunk nothing will finish
     if (speakerOn && !playing && !count && !M5.Speaker.isPlaying() && millis() - lastData > 200) {
       switchToMic();  // done talking: listen again
       speakerOn = false;

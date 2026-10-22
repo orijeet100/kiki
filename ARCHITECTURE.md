@@ -63,6 +63,8 @@ src/kiki/
 device/       the Tab5's programs, one Arduino sketch per folder (v0.14, ADR 0032)
   check/      screen, touch, mic and speaker check
   stream/     the Tab5 program: streamed screen, touch, mic, speaker, volume bar
+  kiki/       the native Tab5 program (v0.15, ADR 0033): the UI drawn with LVGL, same audio;
+              build.ps1, lv_conf.h, src/ (Inter fonts and their OFL licence)
               (secrets.h: Wi-Fi and the laptop's IP, git-ignored; secrets.h.example committed)
 tests/
   test_tools.py       tools.py against a temp SQLite file
@@ -127,7 +129,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
 | `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished and still silent `KIKI_END_GRACE_SECS` (0.4 s) later, or after `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). Speech within the grace period, like the next item after a list comma, keeps the same command ([ADR 0023](docs/adr/0023-grace-period-after-a-finished-sounding-pause.md)). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)), on `KIKI_WHISPER_THREADS` (8) CPU threads. Pipecat's service doesn't expose the thread count, so `processors()` subclasses it to pass one. |
-| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. A follow-up the agent didn't catch (`DIDNT_CATCH`) is logged with `said` empty and not spoken, so no new window opens (FR-0.18). |
+| `Brain` | Runs `run_turn(transcript, source="voice")` in a thread, pushes the reply as `TTSSpeakFrame`, and logs the turn when the first reply audio plays. If a command ends and Whisper finds no words within `NO_WORDS_SECS` (3 s), it sets the state back to idle, which nothing else would. A follow-up the agent didn't catch (`DIDNT_CATCH`) is logged with `said` empty and not spoken, so no new window opens (FR-0.18). |
 | `PiperTTSService` | Speaks the reply locally. |
 
 Chimes are soft "glass" tones generated in code at 48 kHz (`chime()` in `voice.py`): each note is a sine with gentle 2nd and 3rd harmonics, a click-free attack and a natural ring-out, about 1.2 s and -7 dBFS by default (`KIKI_CHIME_VOLUME`; -10 dBFS went unnoticed, -3 dBFS was too loud). Listening starts with a rising fifth (C6 to G6). Nothing plays when it stops; the reply, or the silence, says it (FR-0.11). The style was picked by ear from three candidates (glass, marimba, bell).
@@ -206,6 +208,29 @@ The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so 
 **Volume** ([ADR 0031](docs/adr/0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md)): M5Unified's output is `sample × 2 × magnification × master² × channel² / 2³⁶`, clipped. It is fixed at magnification 8 and master and channel 255, where a full-scale sample comes out at 0.98 of the range. `makeLouderAtVolume` then boosts each chunk 2×, limits it to 0.95 of full scale (instant attack, 60 ms release), and scales it by the volume bar. The bar is the Tab5's own (touches on it never reach the page), linear, saved in `Preferences` (`kiki`/`vol`), and starts at 5%.
 
 **The Tab5 program** (`device/stream/stream.ino`): `setup` starts the JPEG decoder, the mic, `sendMicPacketsTask`, `playKikiAudioTask` and the Wi-Fi; `loop` handles touches and the screen link. Test commands over USB serial (115200): `tap x y` taps the page like a finger, `shot` sends the screen as raw RGB (the only time the log waits for the reader). Every link logs to the serial monitor.
+
+**Native UI** (v0.15, `device/kiki`, [ADR 0033](docs/adr/0033-draw-the-ui-natively-on-the-tab5.md)): the alternative to the streamed page. The Tab5 draws the UI itself with LVGL 9.6 and needs no Chrome and no `kiki.screen`; it follows Kiki's events itself, so Kiki must run with `KIKI_UI_HOST=0.0.0.0`. `secrets.h` adds `KIKI_PORT` (Kiki's UI port) and `KIKI_TZ` (a POSIX time zone for run times).
+
+| File | What |
+|---|---|
+| `kiki.ino` | setup, the main loop, the shared state and the serial test commands (`tap`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
+| `events.ino` | `GET /events` (snapshot, state, list, turn) into the screen's state; `POST /item` and `POST /command` |
+| `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List, text box and keyboard, History sheet, volume bar |
+| `orb.ino` | the Speaking Orb's particle field and shapes, ported; the speaking pulse from the reply's words |
+| `audio.ino` | mic and speaker, as in `device/stream` |
+
+The orb draws 3,000 particles at half resolution in its own task on core 0, into bands of rows in internal RAM, with lookup tables for sine and the rings and single-precision maths only (Arduino's `PI` is a double and forced software maths); the P4's PPA scales each frame 2× straight into the panel's framebuffer. LVGL redraws only what changes and leaves the orb's rectangle alone; the orb pauses while History or the keyboard covers it. The speaking pulse comes from the reply's words with the web's syllable estimate, its clock restarting when the Tab5 actually starts playing. Measured on the Tab5 (2026-10-22):
+
+| | Before (first port) | After |
+|---|---|---|
+| Orb, listening / thinking | 44 ms a frame, ~21 fps | ~21 ms, ~40 fps |
+| Orb, speaking | slower | ~24 ms, ~36 fps |
+| Tap → keyboard open | 442 ms | 17 ms |
+| Tap → item flipped | 119 ms | 10 ms |
+| Tap → History open | didn't open | 130–137 ms |
+| Mic packets per 10 s | 502 | 502 |
+
+Lessons: 168 KB of static buffers in internal RAM starved Wi-Fi and the speaker's DMA and rebooted the Tab5 when Kiki spoke (the particles now live in PSRAM); a part chunk left in the speaker FIFO kept the mic paused for good (both programs now drop it after 200 ms with no new audio); a screenshot over USB freezes the screen for seconds, so none are taken during live replies. Build and flash with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9` (it adds the sketch folder to the include path so LVGL finds `lv_conf.h`).
 
 **Building and flashing** ([ADR 0032](docs/adr/0032-device-code-lives-in-this-repo.md)): copy `secrets.h.example` to `secrets.h` in the sketch folder and fill it in, then
 
@@ -293,7 +318,7 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 |---|---|---|
 | `listening` | `WakeGate` | wake word heard; reply finished (the follow-up window) |
 | `thinking` | `WakeGate`, `ui.send_command` | end of a command, before the agent answers |
-| `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word or in the follow-up window; a follow-up that wasn't a command; reply finished |
+| `idle` | `WakeGate`, `Brain`, `ui.send_command` | nothing said after the wake word or in the follow-up window; a command with no words (no transcript within `NO_WORDS_SECS`, 3 s); a follow-up that wasn't a command; reply finished |
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
 | `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
 
@@ -364,6 +389,9 @@ Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-
 | `arduino-cli` 1.5.1 (installed with winget) | Builds and flashes the Tab5 program ([ADR 0032](docs/adr/0032-device-code-lives-in-this-repo.md)) | v0.14 |
 | Board package `m5stack:esp32` 3.3.10 | The ESP32-P4 tool chain and the `M5Tab5` board, with ESP-IDF's JPEG decoder | v0.14 |
 | M5Unified 0.2.27, M5GFX 0.2.34 (Arduino libraries) | The Tab5's display, touch, mic, speaker and power | v0.14 |
+| LVGL 9.6.0 (Arduino library, MIT) | The native UI's widgets, fonts and partial redraws ([ADR 0033](docs/adr/0033-draw-the-ui-natively-on-the-tab5.md)) | v0.15 |
+| ArduinoJson 7.4.3 (Arduino library, MIT) | Parses Kiki's events on the Tab5 | v0.15 |
+| Inter (SIL OFL 1.1, from fontsource), converted with `lv_font_conv` 1.5.3 (build time only) | The native UI's text, as in DESIGN.md | v0.15 |
 
 ## Testing
 

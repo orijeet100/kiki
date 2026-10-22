@@ -58,3 +58,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0030](0030-the-tab5-mic-and-speaker-take-turns.md) | The Tab5's mic and speaker take turns | Accepted |
 | [0031](0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) | The Tab5's volume is applied to the samples, under a fixed ceiling, after a compressor | Accepted |
 | [0032](0032-device-code-lives-in-this-repo.md) | Device code lives in this repo, one Arduino sketch per folder under `device/`, built with arduino-cli | Accepted |
+| [0033](0033-draw-the-ui-natively-on-the-tab5.md) | Draw the UI natively on the Tab5 with LVGL, alongside the streamed page | Proposed |

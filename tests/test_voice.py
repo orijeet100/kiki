@@ -171,6 +171,22 @@ def test_fr_0_13_gate_publishes_listening_then_thinking():
     assert states_during(frames) == ["listening", "thinking"]
 
 
+def test_fr_0_13_a_command_with_no_words_does_not_leave_kiki_thinking(
+    tmp_path, monkeypatch
+):
+    # "Hey jarvis" then a cough: the gate says "thinking", Whisper finds no words, no turn runs.
+    monkeypatch.setattr(voice, "NO_WORDS_SECS", 0.2)
+    events.set_state("thinking")
+    brain = voice.Brain(connect(str(tmp_path / "brain.db")))
+    asyncio.run(
+        run_test(
+            Pipeline([brain]),
+            frames_to_send=[VADUserStoppedSpeakingFrame(), SleepFrame(sleep=0.5)],
+        )
+    )
+    assert events.current_state()["value"] == "idle"
+
+
 def test_fr_0_13_gate_goes_back_to_idle_if_nothing_is_said(monkeypatch):
     monkeypatch.setattr(voice, "LISTEN_TIMEOUT_SECS", -1)
     assert states_during(WAKE + silence(0.2)) == ["listening", "idle"]
