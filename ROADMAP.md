@@ -32,6 +32,7 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | v0.11 | **Done** (2026-10-17) | **Follow-up window, again** (from daily use). Kiki listens 5 s after each reply for another command, without the wake word; speech that isn't a command gets no reply ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md)). |
 | v0.12 | **Done** (2026-10-21) | **List model.** Kiki remembers every Item: Frequent or Occasional, Needed or Not needed, with a Usual quantity. Removing and clearing mark Items Not needed instead of deleting them ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). |
 | v0.13 | **Done** (2026-10-21) | **Whole replies** (from daily use). A reply after a quiet spell lost its first words ("Milk is added to your list" played as "your list"): the speaker output now gets silence between sounds, so Windows never lets it fall asleep. |
+| v0.14 | **Done** (2026-10-21) | **Tab5 on the fridge.** An M5Stack Tab5 is Kiki's screen, mic and speaker, a thin client of the laptop over the home Wi-Fi: the real UI page streamed to it with touch and an on-screen keyboard, its mic over UDP, Kiki's voice on its speaker with a volume bar of its own ([ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md) to [0032](docs/adr/0032-device-code-lives-in-this-repo.md)). |
 
 ### Functional requirements
 
@@ -65,6 +66,10 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | FR-0.26 | v0.12 | Replaces FR-0.7. "Clear the list" makes every Item Not needed, immediately and with no confirmation, and replies with how many Items it took off. |
 | FR-0.27 | v0.12 | The UI list shows Needed Items first, then the Not needed Frequent Items dimmed and labelled. Clicking an Item flips it between Needed and Not needed ([docs/ui.md](docs/ui.md)). |
 | FR-0.28 | v0.13 | Every chime and reply plays from its first word, however long Kiki was quiet before it: the speaker output is written to continuously, silence between sounds. |
+| FR-0.29 | v0.14 | With `KIKI_MIC=tab5`, Kiki listens through the Tab5: UDP packets of 20 ms of 16 kHz mono audio on `KIKI_MIC_PORT` (8768) become its mic, in order. The wake word, follow-up window and transcription are unchanged. |
+| FR-0.30 | v0.14 | With `KIKI_SPEAKER=tab5`, the chime and replies play on the Tab5: 16 kHz mono over TCP to the Tab5 connected on `KIKI_SPEAKER_PORT` (8769), sent at the pace they play and at most 0.15 s ahead, none of it lost. |
+| FR-0.31 | v0.14 | `python -m kiki.screen` shows the UI page on the Tab5 as it looks in a browser: a headless Chrome renders it at 720×1200, the Tab5 on `KIKI_SCREEN_PORT` (8767) gets the newest frame each time it has shown the last, and its touches are replayed in the page. |
+| FR-0.32 | v0.14 | On the Tab5, focusing the text box opens an on-screen keyboard that lifts the box above it; its Send sends the command. Only the page streamed to the Tab5 gets the keyboard. |
 
 ### Non-functional requirements
 
@@ -76,6 +81,8 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 | NFR-0.4 | v0.1 | Every turn is appended as one JSON line to the turn log, in the event schema from [ARCHITECTURE.md](ARCHITECTURE.md#events). No audio is stored. |
 | NFR-0.5 | v0.1 | The model name and API key come only from environment variables. No key is ever committed. |
 | NFR-0.6 | v0.4 | The UI is served on localhost only. |
+| NFR-0.7 | v0.14 | Replaces NFR-0.6. The UI is served on localhost only, unless `KIKI_UI_HOST` opens it to the home network for the Tab5. Either way it refuses requests addressed to any host name but `localhost` (DNS rebinding), and commands or clicks that aren't JSON. |
+| NFR-0.8 | v0.14 | Replaces NFR-0.2. Audio stays in the home: with the laptop's mic it never leaves the laptop, with the Tab5 it travels only between the Tab5 and the laptop. Only the command text goes to the Claude API. |
 
 ### Scenarios (text tests, v0.1)
 
@@ -122,11 +129,12 @@ Requirement IDs: `FR-<version>.<n>` (functional), `NFR-<version>.<n>` (non-funct
 - **v0.11:** FR-0.18 met; by voice, a command said within 5 s of a reply works without "hey jarvis", and talking that isn't a command in the window gets no reply.
 - **v0.12:** every v0.12 requirement has a passing test, including scenarios 13 to 23 against the real API; the tests for FR-0.5, FR-0.6 and FR-0.7 are replaced by those for FR-0.21, FR-0.25 and FR-0.26; FR-0.13 and FR-0.16 tests still pass; scenarios 13, 16 and 22 work by voice; the page checked by eye with Needed and Not needed Items. An existing `kiki.db` is not migrated: Kiki starts with an empty List.
 - **v0.13:** FR-0.28 met; by voice, a reply after more than ten quiet seconds is heard from its first word.
+- **v0.14:** every v0.14 requirement has a passing test; the tests for NFR-0.6 and NFR-0.2 now carry the IDs that replace them (NFR-0.7, NFR-0.8). Checked by hand on the Tab5 (the Tab5 program has no automated tests): the page and the List as in the browser, History opened by touch, a command typed on the on-screen keyboard and sent, spoken commands heard through the Tab5's mic with every mic packet arriving (500 per 10 s), replies from its speaker clean and loud enough at a volume the owner chose, nothing louder than 5% on a new Tab5, and the Tab5 reconnecting by itself after a restart.
 - **v0 ships** when all four steps are done. Tag `v0`, add a CHANGELOG entry.
 
 ### Non-goals for v0
 
-Ordering or any purchase, multi-turn conversation or follow-up questions, confirmation dialogs, decrementing quantities, multiple lists, voice recognition or per-person permissions, exporting or syncing the list to phones ([ADR 0014](docs/adr/0014-reject-list-export-to-phone.md)), access from other devices on the network, offline fallback, non-English speech, a camera, and real hardware. v0.12 also leaves out Orders, Groups, more than one Store, units, deleting Items, and learning which Items are Frequent from past Orders.
+Ordering or any purchase, multi-turn conversation or follow-up questions, confirmation dialogs, decrementing quantities, multiple lists, voice recognition or per-person permissions, exporting or syncing the list to phones ([ADR 0014](docs/adr/0014-reject-list-export-to-phone.md)), access from other devices on the network, offline fallback, non-English speech, a camera, and real hardware. v0.14 brings in one device, the Tab5, and its access to the laptop over the home network; other devices are still out, and so is talking over Kiki while the Tab5 speaks ([ADR 0030](docs/adr/0030-the-tab5-mic-and-speaker-take-turns.md)). v0.12 also leaves out Orders, Groups, more than one Store, units, deleting Items, and learning which Items are Frequent from past Orders.
 
 ### Open checks
 
@@ -137,7 +145,9 @@ Ordering or any purchase, multi-turn conversation or follow-up questions, confir
 
 Unordered. Each becomes a version only when we decide v1, v2 and so on.
 
-- Fridge hardware: M5Stack CoreS3 as a thin mic, speaker and screen streaming to the laptop. Transport (WebSocket vs WebRTC) decided by ADR at that time.
+- A native UI on the Tab5, drawn on the device from Kiki's events instead of streamed (in progress; would supersede [ADR 0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md)).
+- Full duplex on the Tab5: one shared audio clock and echo cancellation, so "hey jarvis" works while it speaks and the chime doesn't pause the mic.
+- A shared secret between the Tab5 and the laptop ([ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md)), and finding the laptop by name (mDNS) instead of a fixed IP.
 - Cart building from the list, no purchase, then read-back.
 - Ordering behind a confirmation gate (likely browser automation).
 - Orders ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md)): "order placed", after a two-step confirmation, records what was ordered. When the Order is complete, the List starts over: every Frequent Item is Needed at its Usual quantity, every Occasional Item is Not needed, and Missing Items ("the blueberries didn't come") stay Needed. Occasional Items that were never ordered can then be deleted.

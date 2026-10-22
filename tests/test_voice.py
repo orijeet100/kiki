@@ -6,11 +6,9 @@ no microphone, no API cost. First run downloads the Whisper and Piper models.
 """
 
 import asyncio
-import io
 import json
 import os
 import time
-import wave
 
 import numpy as np
 import pytest
@@ -431,32 +429,6 @@ def test_fr_0_28_the_speaker_keeps_getting_silence_between_sounds():
 # --- real models on synthesized speech -------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def speak():
-    from pipecat.services.piper.tts import PIPER_CACHE_DIR
-    from piper import PiperVoice
-    from piper.download_voices import download_voice
-    from scipy.signal import resample_poly
-
-    path = PIPER_CACHE_DIR / f"{voice.PIPER_VOICE}.onnx"
-    if not path.exists():
-        PIPER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        download_voice(voice.PIPER_VOICE, PIPER_CACHE_DIR)
-    piper = PiperVoice.load(str(path))
-
-    def speak(text):
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            piper.synthesize_wav(text, w)
-        buf.seek(0)
-        with wave.open(buf) as w:
-            rate = w.getframerate()
-            pcm = np.frombuffer(w.readframes(w.getnframes()), np.int16)
-        return resample_poly(pcm, 16000, rate)
-
-    return speak
-
-
 def run_voice(tmp_path, audio_frames):
     """The app's own processor chain (gate, VAD, Whisper, Brain, Piper) with a scripted model."""
 
@@ -479,7 +451,7 @@ def run_voice(tmp_path, audio_frames):
 
 
 @pytest.mark.voice
-def test_nfr_0_2_end_to_end_only_text_reaches_the_model(tmp_path, speak, monkeypatch):
+def test_nfr_0_8_end_to_end_only_text_reaches_the_model(tmp_path, speak, monkeypatch):
     monkeypatch.setenv("KIKI_LOG", str(tmp_path / "turns.jsonl"))
     audio = [
         *silence(0.5),

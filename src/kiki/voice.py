@@ -35,6 +35,9 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.transports.base_input import BaseInputTransport
+from pipecat.transports.base_output import BaseOutputTransport
+from pipecat.transports.base_transport import TransportParams
 from pipecat.workers.runner import WorkerRunner
 
 from kiki import tools, ui
@@ -148,6 +151,100 @@ class KeepSpeakerAwake(BaseAudioMixer):
 
     async def mix(self, audio: bytes) -> bytes:
         return audio
+
+
+class Tab5Mic(BaseInputTransport):
+    """The Tab5's mic in place of the laptop's (KIKI_MIC=tab5, FR-0.29, ADR 0029).
+
+    Each UDP packet is 20 ms of 16 kHz mono int16, sent as the Tab5 records it. UDP, so there
+    is no connection to set up again when either side restarts; a lost packet is 20 ms of
+    silence to the wake word, which it shrugs off.
+    ponytail: open to the home network with no password (ADR 0027).
+    """
+
+    def __init__(self, port: int):
+        super().__init__(
+            TransportParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE)
+        )
+        self._port = port
+        self._packets: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def start(self, frame):
+        await super().start(frame)
+        packets = self._packets
+
+        class Receiver(asyncio.DatagramProtocol):
+            def datagram_received(self, data, addr):
+                packets.put_nowait(data)
+
+        await asyncio.get_running_loop().create_datagram_endpoint(
+            Receiver, local_addr=("0.0.0.0", self._port)
+        )
+        self.create_task(self._forward_packets_as_audio())
+        await self.set_transport_ready(frame)
+        print(f"Listening to the Tab5's mic on UDP port {self._port}")
+
+    async def _forward_packets_as_audio(self):
+        received, since = 0, time.monotonic()
+        while True:
+            audio = await self._packets.get()
+            received += 1
+            if time.monotonic() - since >= 10:  # 500 means none lost on the way
+                logger.info(f"Kiki: Tab5 mic sent {received} packets in 10 s")
+                received, since = 0, time.monotonic()
+            await self.push_audio_frame(
+                InputAudioRawFrame(audio=audio, sample_rate=SAMPLE_RATE, num_channels=1)
+            )
+
+
+class Tab5Speaker(BaseOutputTransport):
+    """Kiki's chime and replies on the Tab5's speaker (KIKI_SPEAKER=tab5, FR-0.30, ADR 0029).
+
+    The Tab5 connects to the port and is sent 16 kHz mono int16. Audio leaves at the pace it
+    plays, kept LEAD_SECS ahead so a Wi-Fi hiccup doesn't run the Tab5 dry, and "Kiki stopped
+    speaking" (and the follow-up window after it) still roughly matches what the room hears.
+    With no Tab5 connected the audio is dropped.
+    ponytail: open to the home network with no password (ADR 0027).
+    """
+
+    LEAD_SECS = 0.15
+
+    def __init__(self, port: int):
+        super().__init__(
+            TransportParams(audio_out_enabled=True, audio_out_sample_rate=SAMPLE_RATE)
+        )
+        self._port = port
+        self._writer: asyncio.StreamWriter | None = None
+        self._played_by = 0.0  # when the Tab5 will have played everything sent so far
+
+    async def start(self, frame):
+        await super().start(frame)
+        await asyncio.start_server(self._on_tab5_connected, "0.0.0.0", self._port)
+        await self.set_transport_ready(frame)
+        print(f"Speaking through the Tab5 on port {self._port}")
+
+    async def _on_tab5_connected(self, reader, writer):
+        if self._writer:  # the Tab5 restarted: the old connection is dead
+            self._writer.close()
+        self._writer = writer
+        logger.info("Kiki: Tab5 speaker connected")
+
+    async def write_audio_frame(self, frame) -> bool:
+        if self._writer:
+            try:
+                self._writer.write(frame.audio)
+                await self._writer.drain()
+            except ConnectionError:
+                logger.info("Kiki: Tab5 speaker disconnected")
+                self._writer = None
+        # Paced by the clock, not by sleeping one chunk per chunk: Windows oversleeps a 40 ms
+        # sleep by several ms, so that fell behind real time and the Tab5 ran out mid-word.
+        now = time.monotonic()
+        self._played_by = (
+            max(self._played_by, now) + len(frame.audio) / 2 / self.sample_rate
+        )
+        await asyncio.sleep(max(0.0, self._played_by - now - self.LEAD_SECS))
+        return True
 
 
 class WakeGate(FrameProcessor):
@@ -432,18 +529,35 @@ async def run() -> None:
     except ui.AlreadyRunning as e:
         sys.exit(str(e))
     warm_up()
+    tab5_mic = os.environ.get("KIKI_MIC") == "tab5"
+    tab5_speaker = os.environ.get("KIKI_SPEAKER") == "tab5"
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
+            audio_in_enabled=not tab5_mic,
+            audio_out_enabled=not tab5_speaker,
             audio_in_sample_rate=SAMPLE_RATE,
             audio_out_mixer=KeepSpeakerAwake(),
         )
     )
-    pipeline = Pipeline([transport.input(), *processors(conn), transport.output()])
+    mic = (
+        Tab5Mic(int(os.environ.get("KIKI_MIC_PORT", "8768")))
+        if tab5_mic
+        else transport.input()
+    )
+    speaker = (
+        Tab5Speaker(int(os.environ.get("KIKI_SPEAKER_PORT", "8769")))
+        if tab5_speaker
+        else transport.output()
+    )
+    pipeline = Pipeline([mic, *processors(conn), speaker])
     worker = PipelineWorker(
         pipeline,
-        params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE),
+        # The Tab5 plays 16 kHz. Piper then speaks at that rate directly and only the chime
+        # is resampled: an output's resampler accepts a single input rate.
+        params=PipelineParams(
+            audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_sample_rate=SAMPLE_RATE if tab5_speaker else 24000,
+        ),
         idle_timeout_secs=None,  # always on: never shut down for being quiet
     )
     print(

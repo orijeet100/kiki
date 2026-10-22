@@ -4,6 +4,27 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [v0.14] - 2026-10-21
+
+Tab5 on the fridge.
+
+### Added
+- An M5Stack Tab5 as Kiki's screen, mic and speaker, a thin client of the laptop over the home Wi-Fi (ADR 0027, ADR 0032). Its program is `device/stream`; `device/check` checks its screen, touch, mic and speaker.
+- `python -m kiki.screen` streams the real UI page to the Tab5: a headless Chrome renders it at 720×1200 and the newest JPEG frame goes out each time the Tab5 has shown the last; touches come back as touch events (FR-0.31, ADR 0028).
+- An on-screen keyboard in the page streamed to the Tab5 (FR-0.32).
+- `KIKI_MIC=tab5`: Kiki listens through the Tab5's mic, 20 ms UDP packets from a task of its own (FR-0.29, ADR 0029).
+- `KIKI_SPEAKER=tab5`: the chime and replies play on the Tab5, paced by the clock 0.15 s ahead (FR-0.30, ADR 0029). Its mic and speaker take turns (ADR 0030).
+- A volume bar along the bottom of the Tab5's screen: applied to the samples under a ceiling that can't clip, with a compressor, saved on the Tab5, starting at 5% (ADR 0031).
+- `KIKI_UI_HOST` opens the UI server to the home network; it then accepts requests addressed to an IP address as well as `localhost` (NFR-0.7 replaces NFR-0.6).
+
+### Changed
+- NFR-0.8 replaces NFR-0.2: audio stays in the home, between the Tab5 and the laptop at most. Only command text reaches the model, tested through the Tab5's mic path too.
+- The `speak` test fixture moved to `tests/conftest.py`, shared by `test_voice.py` and `test_tab5.py`.
+
+### Fixed (on the way, before release)
+- The Tab5's mic lost a third of its audio: connection attempts blocked the loop that sent it, Wi-Fi power saving dropped packets, and the USB log waited for a reader. Now 500 of 500 packets every 10 s.
+- Replies on the Tab5 were choppy (Kiki fell behind real time) and then garbled and loud (mic and speaker running at once on separate clocks).
+
 ## [v0.13] - 2026-10-21
 
 Whole replies.

@@ -20,6 +20,11 @@ v0.4 (UI: ui.py, started by voice.py or on its own)
   events.publish ──> ui.py (http.server, Server-Sent Events) ──> browser on 127.0.0.1:8765
   browser text box ──> POST /command ──> run_turn (same path as voice)
   list click       ──> POST /item    ──> add_items / remove_items (no model, v0.12)
+
+v0.14 (Tab5: a thin client of the laptop over the home Wi-Fi)
+  Tab5 mic ──UDP :8768──> Tab5Mic ──> WakeGate ... PiperTTSService ──> Tab5Speaker ──TCP :8769──> Tab5 speaker
+  ui.html in a headless Chrome ──screen.py──JPEG frames, TCP :8767──> Tab5 screen
+  Tab5 touches ──"down|move|up x y"──> screen.py ──> touch events in the page
 ```
 
 | Layer | Choice | ADR |
@@ -33,6 +38,10 @@ v0.4 (UI: ui.py, started by voice.py or on its own)
 | TTS | Piper, voice `en_US-lessac-medium` (Kokoro if Piper sounds too robotic) | [0004](docs/adr/0004-run-stt-and-tts-locally.md) |
 | State | SQLite, one file | [0006](docs/adr/0006-store-state-in-sqlite.md) |
 | Host | The laptop, permanently | [0007](docs/adr/0007-laptop-is-the-permanent-host.md) |
+| Device (v0.14) | M5Stack Tab5, an Arduino sketch in `device/stream`, built with arduino-cli | [0032](docs/adr/0032-device-code-lives-in-this-repo.md) |
+| Device links | Plain sockets opened by the Tab5: screen TCP 8767, mic UDP 8768, speaker TCP 8769 | [0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md), [0029](docs/adr/0029-tab5-mic-over-udp-speaker-over-tcp-paced-by-the-clock.md) |
+| Device screen | The real UI page, rendered by a headless Chrome and streamed as JPEG frames | [0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md) |
+| Device audio | Mic and speaker take turns; volume in the samples under a fixed ceiling | [0030](docs/adr/0030-the-tab5-mic-and-speaker-take-turns.md), [0031](docs/adr/0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) |
 
 ## Code layout
 
@@ -47,7 +56,14 @@ src/kiki/
   ui.html     the whole UI: one file, no build step
   speaking-orb.js  the orb: vendored Speaking Orb web component, MIT (ADR 0024)
   latency.py  median latency per stage from the turn log (v0.3)
-  voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner
+  voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner;
+              Tab5Mic and Tab5Speaker (v0.14)
+  screen.py   streams the UI page to the Tab5 and replays its touches (v0.14)
+  screen_keyboard.js  the on-screen keyboard injected into the page streamed to the Tab5
+device/       the Tab5's programs, one Arduino sketch per folder (v0.14, ADR 0032)
+  check/      screen, touch, mic and speaker check
+  stream/     the Tab5 program: streamed screen, touch, mic, speaker, volume bar
+              (secrets.h: Wi-Fi and the laptop's IP, git-ignored; secrets.h.example committed)
 tests/
   test_tools.py       tools.py against a temp SQLite file
   test_events.py      turn log format
@@ -56,6 +72,8 @@ tests/
   test_latency.py     latency report
   test_ui.py          UI server over real HTTP with a scripted model
   test_voice.py       wake gate with a fake detector; real models on Piper-synthesized speech (marked `voice`)
+  test_tab5.py        the laptop's side of the Tab5's links, over real sockets
+  conftest.py         `speak`: Piper-synthesized speech for the voice tests
 ```
 
 `src/` layout is uv's default for a package (`uv init --lib`).
@@ -101,7 +119,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 ## Voice loop (v0.2)
 
-`python -m kiki.voice` runs `Pipeline([mic, *processors(conn), speaker])` on Pipecat's `LocalAudioTransport` at 16 kHz.
+`python -m kiki.voice` runs `Pipeline([mic, *processors(conn), speaker])` at 16 kHz. The mic and the speaker are Pipecat's `LocalAudioTransport`, or the Tab5's (`Tab5Mic` with `KIKI_MIC=tab5`, `Tab5Speaker` with `KIKI_SPEAKER=tab5`, see [Tab5](#tab5-v014)).
 
 | Processor | Job |
 |---|---|
@@ -131,7 +149,7 @@ Measured on this laptop plugged in (2026-10-18, `test_nfr_0_3_*`: synthesized sp
 
 **Always on:** the pipeline worker runs with `idle_timeout_secs=None`; Pipecat's default would shut it down after a quiet spell.
 
-Only the transcript text crosses the network (to the model API). Audio, the wake model, VAD, Whisper and Piper all run on the laptop (NFR-0.2).
+Audio stays in the home (NFR-0.8): with the laptop's mic it never leaves the laptop, with the Tab5 it travels only between the Tab5 and the laptop. The wake model, VAD, Whisper and Piper all run on the laptop; only the transcript text goes to the model API.
 
 ## UI (v0.4)
 
@@ -148,12 +166,54 @@ Only the transcript text crosses the network (to the model API). Audio, the wake
 The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns (Needed items first, then Not needed Frequent items dimmed; a click flips one), and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
-- Binds to 127.0.0.1 only (NFR-0.6).
-- Rejects requests whose `Host` isn't `127.0.0.1` or `localhost` (blocks DNS rebinding).
+- Binds to 127.0.0.1, unless `KIKI_UI_HOST` opens it to the home network for a Tab5 program that follows `/events` itself (NFR-0.7, [ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md)). There is no password yet.
+- Rejects requests whose `Host` isn't `localhost` or an IP address (blocks DNS rebinding: an IP can't be rebound to another site, and the Tab5 addresses the laptop by its IP).
 - `POST /command` and `POST /item` require `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
 - Commands and item names are 1 to 200 characters; `needed` must be `true` or `false`.
 
 **One Kiki at a time (FR-0.15):** the voice loop and `kiki.ui` bind the UI port first. On Windows the server doesn't set `SO_REUSEADDR` (which there would let a second process share the port), so a second copy fails with "Kiki is already running" before loading any models. Two copies used to both answer every command.
+
+## Tab5 (v0.14)
+
+An M5Stack Tab5 (ESP32-P4, 720×1280 touchscreen, two mics, 1 W speaker, Wi-Fi through an ESP32-C6) on the fridge is Kiki's screen, mic and speaker. It is only a client: it opens every link to the laptop, whose IP and the Wi-Fi it reads from `device/stream/secrets.h` ([ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md)). Everything else still runs on the laptop.
+
+**Running it:** flash `device/stream` once (below), then on the laptop:
+
+```powershell
+$env:KIKI_MIC="tab5"; $env:KIKI_SPEAKER="tab5"; uv run --env-file .env python -m kiki.voice
+uv run python -m kiki.screen        # in a second terminal, once Kiki is up
+```
+
+The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so start order doesn't matter to it. The laptop must stay awake and keep its IP (reserve it in the router).
+
+| Link | Direction | Transport, port | What travels | Laptop side | Tab5 side |
+|---|---|---|---|---|---|
+| Screen | laptop → Tab5 | TCP 8767 | 4-byte big-endian length, then a JPEG of the page, 720×1200 | `screen.py`: `PageStreamer.serve_tab5` | `receiveFrames`, `decodeAndShowFrame` |
+| Screen acks and touches | Tab5 → laptop | same connection | `shown` after each frame; `down x y`, `move x y` (≤30/s), `up x y` | replayed with `Input.dispatchTouchEvent` | `handleTouch` |
+| Mic | Tab5 → laptop | UDP 8768 | 20 ms per packet: 320 samples, 16 kHz mono int16 | `voice.Tab5Mic` | `sendMicPacketsTask` |
+| Speaker | laptop → Tab5 | TCP 8769 | 16 kHz mono int16, paced to real time, 0.15 s ahead | `voice.Tab5Speaker` | `playKikiAudioTask` |
+
+**Screen** ([ADR 0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md), FR-0.31): `python -m kiki.screen` starts a headless Chrome (`KIKI_CHROME`), sizes the page like the Tab5 with touch emulation on, loads `http://127.0.0.1:<KIKI_UI_PORT>/` and starts the DevTools screencast (JPEG, `KIKI_SCREEN_QUALITY` 70). Chrome sends a frame on every repaint, about 12 a second while the orb moves, 25–35 KB each. Each Tab5 connection is sent the newest frame at once, then the newest again only after `shown`, so a slow link skips frames instead of queueing them. The Tab5 decodes a frame in hardware in ~9 ms and shows it in ~80 ms. The page is 720×1200 in the panel's own portrait orientation (rotated to landscape, showing a frame took 767 ms instead of 78 ms); the Tab5 draws its volume bar in the bottom 80 px. The decoder writes big-endian RGB565 (`JPEG_DEC_RGB_ELEMENT_ORDER_RGB`), which is what M5GFX's `pushImage` expects.
+
+**On-screen keyboard** (FR-0.32): a headless Chrome has no keyboard, so `screen.py` injects `screen_keyboard.js` into the page it streams, and only there: it opens when the text box is focused, lifts the docked box above itself, types into it, and Send submits the form. Chrome runs scripts added with `Page.addScriptToEvaluateOnNewDocument` only once `Page.enable` has been sent, which the first version missed.
+
+**Mic** ([ADR 0029](docs/adr/0029-tab5-mic-over-udp-speaker-over-tcp-paced-by-the-clock.md), FR-0.29): M5Unified records 20 ms at a time into a ring of 16 buffers (320 ms of slack); its capture task hands each full buffer to `sendMicPacketsTask` and queues the next. That task sends one UDP packet per buffer, whatever the screen is doing. Two settings keep it lossless: Wi-Fi power saving is off (it dropped a quarter of the packets, with gaps of 40 s), and the USB log never waits for a reader (`Serial.setTxTimeoutMs(0)`; a 2 s wait froze the mic whenever nothing was reading). `Tab5Mic` logs `Tab5 mic sent N packets in 10 s`; 500 means none lost.
+
+**Speaker** (FR-0.30): `Tab5Speaker` accepts the Tab5's connection (a new one replaces the old) and writes each 40 ms chunk, pacing itself against `_played_by`, the time the Tab5 will have played everything sent, so it stays `LEAD_SECS` (0.15 s) ahead without drifting; sleeping one chunk per chunk fell behind on Windows and made replies choppy. With the Tab5 speaker the pipeline's output rate is 16 kHz, so Piper speaks at that rate and only the 48 kHz chime is resampled. The Tab5 buffers up to 4 s, starts once 160 ms are in, keeps two chunks queued, and logs `played N ms, G gaps` after each reply.
+
+**Taking turns** ([ADR 0030](docs/adr/0030-the-tab5-mic-and-speaker-take-turns.md)): M5Unified drives the mic and the speaker as two I2S channels with separate clocks on the same pins, and running both at once played garbled, loud noise. So the mic runs by default; when Kiki's audio arrives the Tab5 calls `switchToSpeaker`, and 200 ms after the last sample has played, `switchToMic`. While the Tab5 speaks it can't hear "hey jarvis", and the chime pauses the mic for about half a second.
+
+**Volume** ([ADR 0031](docs/adr/0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md)): M5Unified's output is `sample × 2 × magnification × master² × channel² / 2³⁶`, clipped. It is fixed at magnification 8 and master and channel 255, where a full-scale sample comes out at 0.98 of the range. `makeLouderAtVolume` then boosts each chunk 2×, limits it to 0.95 of full scale (instant attack, 60 ms release), and scales it by the volume bar. The bar is the Tab5's own (touches on it never reach the page), linear, saved in `Preferences` (`kiki`/`vol`), and starts at 5%.
+
+**The Tab5 program** (`device/stream/stream.ino`): `setup` starts the JPEG decoder, the mic, `sendMicPacketsTask`, `playKikiAudioTask` and the Wi-Fi; `loop` handles touches and the screen link. Test commands over USB serial (115200): `tap x y` taps the page like a finger, `shot` sends the screen as raw RGB (the only time the log waits for the reader). Every link logs to the serial monitor.
+
+**Building and flashing** ([ADR 0032](docs/adr/0032-device-code-lives-in-this-repo.md)): copy `secrets.h.example` to `secrets.h` in the sketch folder and fill it in, then
+
+```bash
+arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream
+```
+
+The port is whatever the Tab5 shows up as (`arduino-cli board list`). If an upload can't connect, hold Reset for 2 s until the green LED blinks fast (download mode), upload, then press Reset once to start the program. `device/check` is a standalone check of the screen, touch, mic and speaker.
 
 ## Matching names
 
@@ -269,7 +329,15 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_WHISPER_THREADS` | `8` | CPU threads for Whisper, one per core of this laptop. faster-whisper's own default is 4, about 0.15 s slower; more threads than cores is slower again |
 | `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
-| `KIKI_UI_PORT` | `8765` | UI port (always on 127.0.0.1) |
+| `KIKI_UI_PORT` | `8765` | UI port |
+| `KIKI_UI_HOST` | `127.0.0.1` | Address the UI binds to. `0.0.0.0` opens it to the home network for a Tab5 program that follows `/events` itself (NFR-0.7); no password yet |
+| `KIKI_MIC` | laptop | `tab5`: listen through the Tab5's mic instead of the laptop's (FR-0.29) |
+| `KIKI_MIC_PORT` | `8768` | UDP port the Tab5's mic sends to |
+| `KIKI_SPEAKER` | laptop | `tab5`: play the chime and replies on the Tab5 instead of the laptop (FR-0.30) |
+| `KIKI_SPEAKER_PORT` | `8769` | TCP port the Tab5's speaker connects to |
+| `KIKI_SCREEN_PORT` | `8767` | TCP port the Tab5's screen connects to (`python -m kiki.screen`) |
+| `KIKI_SCREEN_QUALITY` | `70` | JPEG quality of the frames sent to the Tab5 |
+| `KIKI_CHROME` | `C:\Program Files\Google\Chrome\Application\chrome.exe` | The Chrome that renders the page for the Tab5 |
 
 ## Dependencies
 
@@ -289,10 +357,19 @@ Approved. Anything else needs the owner's yes and an ADR.
 
 Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
 
+| Dependency (v0.14) | Why | Since |
+|---|---|---|
+| `websockets` (already installed with Pipecat, now used directly) | `screen.py` talks to Chrome over the DevTools protocol, a WebSocket ([ADR 0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md)) | v0.14 |
+| Google Chrome (installed on the laptop, not a Python package) | Renders the page for the Tab5 | v0.14 |
+| `arduino-cli` 1.5.1 (installed with winget) | Builds and flashes the Tab5 program ([ADR 0032](docs/adr/0032-device-code-lives-in-this-repo.md)) | v0.14 |
+| Board package `m5stack:esp32` 3.3.10 | The ESP32-P4 tool chain and the `M5Tab5` board, with ESP-IDF's JPEG decoder | v0.14 |
+| M5Unified 0.2.27, M5GFX 0.2.34 (Arduino libraries) | The Tab5's display, touch, mic, speaker and power | v0.14 |
+
 ## Testing
 
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios and v0.12 scenarios 13, 16 and 22 to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
 - `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, list clicks (`POST /item`), localhost binding, and the Host, content-type and length checks.
+- `test_tab5.py`: the laptop's side of each Tab5 link over real sockets, with plain sockets standing in for the Tab5: mic packets become audio frames in order (FR-0.29); a second of speaker audio arrives whole, over about 0.85 s (FR-0.30); the screen sends the newest frame after each `shown` and turns touch lines into touch events (FR-0.31); the keyboard script is added after `Page.enable` and before the page loads (FR-0.32). `test_nfr_0_8_*` (marked `voice`) sends synthesized speech as the Tab5's UDP packets through the real wake word and Whisper and checks the model gets only text. The Tab5 program itself is checked by hand.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 23 short Haiku turns, about a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

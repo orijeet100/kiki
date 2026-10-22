@@ -49,7 +49,7 @@ def read_events(response):
             yield json.loads(line[6:])
 
 
-def test_nfr_0_6_binds_to_localhost_only(server):
+def test_nfr_0_7_binds_to_localhost_only(server):
     assert server.server_address[0] == "127.0.0.1"
 
 
@@ -131,24 +131,41 @@ def test_fr_0_27_rejects_a_malformed_click(server, body):
     assert post_item(server, body).status == 400
 
 
-def test_nfr_0_6_rejects_a_click_that_is_not_json(server):
+def test_nfr_0_7_rejects_a_click_that_is_not_json(server):
     assert (
         post_item(server, {"name": "bread", "needed": False}, "text/plain").status
         == 415
     )
 
 
-def test_nfr_0_6_rejects_requests_addressed_to_another_host(server):
+def test_nfr_0_7_rejects_requests_addressed_to_another_host(server):
     response = request(server, "GET", "/", headers={"Host": "evil.example:8765"})
     assert response.status == 403
 
 
-def test_nfr_0_6_rejects_commands_that_are_not_json(server):
+@pytest.mark.parametrize(
+    "host", ["localhost:8765", "127.0.0.1:8765", "192.168.1.216:8765"]
+)
+def test_nfr_0_7_accepts_requests_addressed_to_localhost_or_an_ip_address(server, host):
+    # The Tab5 addresses the laptop by its IP; an IP can't be rebound to another site.
+    assert request(server, "GET", "/", headers={"Host": host}).status == 200
+
+
+def test_nfr_0_7_kiki_ui_host_opens_the_ui_to_the_home_network(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui, "HOST", "0.0.0.0")
+    server = ui.serve(connect(str(tmp_path / "ui.db")), port=0)
+    try:
+        assert server.server_address[0] == "0.0.0.0"
+    finally:
+        server.shutdown()
+
+
+def test_nfr_0_7_rejects_commands_that_are_not_json(server):
     assert post_command(server, "add milk", content_type="text/plain").status == 415
 
 
 @pytest.mark.parametrize("text", ["", "   ", "x" * (ui.MAX_COMMAND_CHARS + 1)])
-def test_nfr_0_6_rejects_empty_or_oversized_commands(server, text):
+def test_nfr_0_7_rejects_empty_or_oversized_commands(server, text):
     assert post_command(server, text).status == 400
 
 

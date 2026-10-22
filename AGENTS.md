@@ -28,6 +28,7 @@ For UI work, also read [docs/ui.md](docs/ui.md) (what it shows and does) and [DE
 | Versions and tags | `v0.1`, `v0.2`, `v1` | |
 | Python | PEP 8: `snake_case` functions and files, `PascalCase` classes | `add_items()` |
 | Env vars | `KIKI_` prefix (except `ANTHROPIC_API_KEY`) | `KIKI_MODEL` |
+| Device sketches | `device/<name>/<name>.ino`, `camelCase` functions, `secrets.h` git-ignored | `device/stream/stream.ino` |
 | Commits | `<area>: <what>` plus IDs when relevant | `tools: add_items keeps existing quantity (FR-0.2)` |
 
 ## How things tie together
@@ -56,4 +57,8 @@ uv run --env-file .env python -m kiki.voice   # voice loop + UI at http://127.0.
 uv run --env-file .env python -m kiki.ui      # UI only, with a text box (no microphone)
 uv run pytest -m "not voice and not scenario" # instant tests only
 uv run python -m kiki.latency                 # median voice latency from the turn log (NFR-0.3)
+uv run python -m kiki.screen                  # stream the UI to the Tab5 (start Kiki first)
+arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream  # flash the Tab5
 ```
+
+With `KIKI_MIC=tab5` and `KIKI_SPEAKER=tab5`, `kiki.voice` uses the Tab5's mic and speaker instead of the laptop's. Never play test sounds through a device's speaker at an untested volume; the Tab5 starts at 5%.
