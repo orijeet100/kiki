@@ -40,7 +40,7 @@ v0.14 (Tab5: a thin client of the laptop over the home Wi-Fi)
 | Host | The laptop, permanently | [0007](docs/adr/0007-laptop-is-the-permanent-host.md) |
 | Device (v0.14) | M5Stack Tab5, an Arduino sketch in `device/stream`, built with arduino-cli | [0032](docs/adr/0032-device-code-lives-in-this-repo.md) |
 | Device links | Plain sockets opened by the Tab5: screen TCP 8767, mic UDP 8768, speaker TCP 8769 | [0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md), [0029](docs/adr/0029-tab5-mic-over-udp-speaker-over-tcp-paced-by-the-clock.md) |
-| Device screen | The real UI page, rendered by a headless Chrome and streamed as JPEG frames | [0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md) |
+| Device screen | The UI drawn natively by the Tab5 with LVGL (`device/kiki`); the streamed page (`device/stream`) remains an alternative | [0033](docs/adr/0033-draw-the-ui-natively-on-the-tab5.md), [0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md) |
 | Device audio | Mic and speaker take turns; volume in the samples under a fixed ceiling | [0030](docs/adr/0030-the-tab5-mic-and-speaker-take-turns.md), [0031](docs/adr/0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) |
 
 ## Code layout

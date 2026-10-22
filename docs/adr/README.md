@@ -53,9 +53,9 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0025](0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md) | Listen for five seconds after each reply, and stay quiet if what's heard isn't a command | Accepted |
 | [0026](0026-one-item-table-holds-the-next-order-state.md) | One item table holds both the item and its state for the next order | Accepted |
 | [0027](0027-the-tab5-is-a-thin-client-over-the-home-network.md) | The Tab5 is a thin client of the laptop over the home network, with plain sockets and no password yet | Accepted |
-| [0028](0028-stream-the-real-ui-page-to-the-tab5.md) | The Tab5 shows the real UI page, rendered by a headless Chrome on the laptop and streamed as JPEG frames | Accepted |
+| [0028](0028-stream-the-real-ui-page-to-the-tab5.md) | The Tab5 shows the real UI page, rendered by a headless Chrome on the laptop and streamed as JPEG frames | Superseded by 0033 |
 | [0029](0029-tab5-mic-over-udp-speaker-over-tcp-paced-by-the-clock.md) | The Tab5's mic reaches Kiki over UDP from its own task; Kiki's voice reaches the Tab5 over TCP, paced by the clock | Accepted |
 | [0030](0030-the-tab5-mic-and-speaker-take-turns.md) | The Tab5's mic and speaker take turns | Accepted |
 | [0031](0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) | The Tab5's volume is applied to the samples, under a fixed ceiling, after a compressor | Accepted |
 | [0032](0032-device-code-lives-in-this-repo.md) | Device code lives in this repo, one Arduino sketch per folder under `device/`, built with arduino-cli | Accepted |
-| [0033](0033-draw-the-ui-natively-on-the-tab5.md) | Draw the UI natively on the Tab5 with LVGL, alongside the streamed page | Proposed |
+| [0033](0033-draw-the-ui-natively-on-the-tab5.md) | Draw the UI natively on the Tab5 with LVGL, alongside the streamed page | Accepted |

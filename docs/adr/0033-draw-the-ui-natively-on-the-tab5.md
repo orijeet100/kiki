@@ -1,6 +1,6 @@
 # 0033. Draw the UI natively on the Tab5 with LVGL, alongside the streamed page
 
-- Status: Proposed (the owner is testing it; if adopted it supersedes 0028)
+- Status: Accepted (the owner tested it on 2026-10-22). Supersedes 0028; the streamed page stays in `device/stream` as an alternative.
 - Date: 2026-10-22
 - Related: FR-0.13, ADR 0027, ADR 0028, ADR 0029, ADR 0030, ADR 0031
 

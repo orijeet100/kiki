@@ -44,7 +44,7 @@ uv run python -m kiki.screen
 
 Say "hey jarvis" to the Tab5, wait for the chime, say a command. Drag the bar along the bottom of its screen for the volume; it starts at 5%.
 
-Or draw the UI on the Tab5 itself, smoother and without Chrome (v0.15, being tested): flash `device/kiki` with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9`, and run Kiki with `$env:KIKI_UI_HOST="0.0.0.0"` as well; `kiki.screen` isn't needed. Details, ports and what was learned: [ARCHITECTURE.md](ARCHITECTURE.md#tab5-v014).
+Better, since v0.15: let the Tab5 draw the UI itself, smoother and without Chrome: flash `device/kiki` with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9`, and run Kiki with `$env:KIKI_UI_HOST="0.0.0.0"` as well; `kiki.screen` isn't needed. Details, ports and what was learned: [ARCHITECTURE.md](ARCHITECTURE.md#tab5-v014).
 
 ## Why
 
