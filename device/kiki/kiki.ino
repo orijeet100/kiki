@@ -172,6 +172,11 @@ void handleSerialTestCommands() {
 }
 
 void setup() {
+  // Ordinary allocations go to PSRAM first, however small: the screen's objects, their styles and
+  // text, and History (mostly pieces under 32 bytes) took the internal RAM the Wi-Fi link (SDIO to
+  // the C6) needs for its receive buffers; with 24-31 KB left it asserted in sdio_rx_get_buffer and
+  // rebooted after "hey jarvis". Drivers that need internal or DMA memory ask for it by capability.
+  heap_caps_malloc_extmem_enable(0);
   M5.begin();
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);  // never wait for the laptop to read the log: it froze the mic for 2 s a line

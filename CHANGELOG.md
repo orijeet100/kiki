@@ -19,6 +19,7 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
 ### Fixed
+- The Tab5 rebooted again and again, usually right after "hey jarvis": its Wi-Fi driver ran out of internal RAM (`assert failed: sdio_rx_get_buffer`) once the List showed every item and History had ordering rows. Everything ordinary now lives in PSRAM; internal RAM free went from 24-31 KB to 110-150 KB, the orb still at 40 fps.
 - An old `#kiki` tab restored by Chrome at start-up made the extension log an error (`worker.js:45`); it now closes the tab quietly.
 - A slow Product page could count as sold out, and the Cart would get a different Product: Kiki now loads it once more first, unless the page says it's out of stock.
 

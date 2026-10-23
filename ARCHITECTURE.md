@@ -284,6 +284,10 @@ arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc
 
 The port is whatever the Tab5 shows up as (`arduino-cli board list`). If an upload can't connect, hold Reset for 2 s until the green LED blinks fast (download mode), upload, then press Reset once to start the program. `device/check` is a standalone check of the screen, touch, mic and speaker.
 
+### Tab5 memory
+
+The Tab5's Wi-Fi is an ESP32-C6 on SDIO, and its receive buffers come from the P4's internal RAM. `setup()` calls `heap_caps_malloc_extmem_enable(0)` first, so every ordinary allocation (LVGL's objects, styles and text, `String`s, the History runs) goes to PSRAM; drivers that need internal or DMA memory ask for it by capability. Before (v0.18), with 22 List rows and History's ordering rows built, internal RAM fell to 24-31 KB and the SDIO driver asserted (`sdio_rx_get_buffer sdio_drv.c:953`) and rebooted, usually right after "hey jarvis" when the speaker took its share. After: 110-150 KB free, History open included, the orb unchanged at 40 fps. Every `[events]` line in the serial log prints the free internal RAM and its largest block. Scrolling History stalls the loop (about 25 passes in 5 s, steps up to 250 ms) with or without this; it's a full redraw of the sheet, not memory.
+
 ## Ordering (v0.17)
 
 Kiki fills the Store's Cart; the owner checks out in the Instacart app. Kiki never places or pays for an order (NFR-0.9).
