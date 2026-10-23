@@ -284,6 +284,10 @@ arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc
 
 The port is whatever the Tab5 shows up as (`arduino-cli board list`). If an upload can't connect, hold Reset for 2 s until the green LED blinks fast (download mode), upload, then press Reset once to start the program. `device/check` is a standalone check of the screen, touch, mic and speaker.
 
+### Tab5 memory
+
+The Tab5's Wi-Fi is an ESP32-C6 on SDIO, and its receive buffers come from the P4's internal RAM. `setup()` calls `heap_caps_malloc_extmem_enable(0)` first, so every ordinary allocation (LVGL's objects, styles and text, `String`s, the History runs) goes to PSRAM; drivers that need internal or DMA memory ask for it by capability. Before (v0.18), with 22 List rows and History's ordering rows built, internal RAM fell to 24-31 KB and the SDIO driver asserted (`sdio_rx_get_buffer sdio_drv.c:953`) and rebooted, usually right after "hey jarvis" when the speaker took its share. After: 110-150 KB free, History open included, the orb unchanged at 40 fps. Every `[events]` line in the serial log prints the free internal RAM and its largest block. Scrolling History stalls the loop (about 25 passes in 5 s, steps up to 250 ms) with or without this; it's a full redraw of the sheet, not memory.
+
 ## Ordering (v0.17)
 
 Kiki fills the Store's Cart; the owner checks out in the Instacart app. Kiki never places or pays for an order (NFR-0.9).
@@ -315,10 +319,6 @@ What the page gives, per line of an Order: `item` is what was placed, `currentIt
 **Chrome's state doesn't matter** (measured 2026-10-23, 17 Items): with Chrome open, the fill took 54 to 60 s; with every window closed and Chrome still running in the background, `chrome.exe` opened a window, filled the Cart in 73 s and the window closed with its tab; with Chrome fully stopped, it started signed in and took 68 s. With another tab in front of Kiki's, Chrome slows the background tab and the fill took 90 s, all Items in. Kiki never moves the mouse or types: the extension's clicks are `element.click()` inside the page. An old `#kiki` tab that Chrome restores at start-up finds no job; the extension closes it without an error. A Product page that shows no buttons within 15 s is loaded once more before it counts as sold out, unless it says "out of stock", "sold out" or "unavailable" (one slow page took longer than that in testing).
 
 **The matching request runs on its own thread.** It's made from inside `update_list`, during the command's own agent run, where Pydantic AI refuses a nested `run_sync` (it could deadlock); a fresh thread is outside that run. Found end to end: the unit tests used a fake matcher. Any other error in an ordering step becomes "Something went wrong with Instacart, please try again." rather than a turn that never ends.
-
-### Tab5 memory
-
-The Tab5's Wi-Fi is an ESP32-C6 on SDIO, and its receive buffers come from the P4's internal RAM. `setup()` calls `heap_caps_malloc_extmem_enable(0)` first, so every ordinary allocation (LVGL's objects, styles and text, `String`s, the History runs) goes to PSRAM; drivers that need internal or DMA memory ask for it by capability. Before (v0.18), with 22 List rows and History's ordering rows built, internal RAM fell to 24-31 KB and the SDIO driver asserted (`sdio_rx_get_buffer sdio_drv.c:953`) and rebooted, usually right after "hey jarvis" when the speaker took its share. After: 110-150 KB free, History open included, the orb unchanged at 40 fps. Every `[events]` line in the serial log prints the free internal RAM and its largest block. Scrolling History stalls the loop (about 25 passes in 5 s, steps up to 250 ms) with or without this; it's a full redraw of the sheet, not memory.
 
 ## Matching names
 
