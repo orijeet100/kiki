@@ -201,7 +201,7 @@ String joinNames(JsonArrayConst list) {
 String joinParts(const String &a, const String &b) { return a.length() && b.length() ? a + " · " + b : a + b; }
 
 // ui.html's chip(), word for word except "→", which Inter's Latin subset doesn't have: "now".
-// Analyzing and filling the Cart are one chip each here; the web UI splits them up.
+// Analyzing and filling the Cart are addOrdering's, below.
 Chip chipFor(JsonObjectConst call) {
   String name = call["name"] | "";
   JsonObjectConst args = call["args"], result = call["result"];
@@ -241,27 +241,51 @@ Chip chipFor(JsonObjectConst call) {
     return {args["name"].as<String>() + " now " + result["product_name"].as<String>(), false};
   }
   if (name == "forget_product_for_item") return {notFound ? notOnList : args["name"].as<String>() + ": product forgotten", false};
-  if (name == "learn_product_preferences") {
-    int orders = result["new_orders"] | 0, matched = result["matched"].size();
-    String text = "read " + String(orders) + (orders == 1 ? " new order" : " new orders") + " · matched " + String(matched);
-    if (result["no_product"].size()) text += " · no product: " + joinNames(result["no_product"]);
-    return {text, result["unreadable_orders"].size() > 0};
-  }
-  if (name == "fill_cart") {
-    int added = 0, total = result["lines"].size();
-    String guesses, failures;
-    for (JsonObjectConst line : result["lines"].as<JsonArrayConst>()) {
-      String status = line["status"] | "";
-      if (status != "failed") added++;
-      if (status == "top_match") guesses += (guesses.length() ? ", " : "") + line["item"].as<String>();
-      if (status == "failed") failures += (failures.length() ? ", " : "") + line["item"].as<String>();
-    }
-    String text = "cart: " + String(added) + " of " + String(total) + " added";
-    if (guesses.length()) text += " · top match: " + guesses;
-    if (failures.length()) text += " · failed: " + failures;
-    return {text, failures.length() > 0 || !result["matching_failed"].isNull()};
-  }
   return {name, false};
+}
+
+String counted(int n, const char *word, const char *plural) { return String(n) + " " + (n == 1 ? word : plural); }
+
+String whyFailed(const String &reason) {
+  return reason == "sold_out" ? "sold out" : reason == "not_found" ? "not found" : reason == "not_added" ? "didn't go in"
+       : reason == "more_than_nine" ? "more than nine" : reason;
+}
+
+// Ordering (v0.17), as ui.html shows it: a few summary chips, and each item's Product, guess or
+// failure as a row under Products in its History card.
+void addOrdering(Run &run, const String &name, JsonObjectConst result) {
+  for (JsonObjectConst m : result["matched"].as<JsonArrayConst>())
+    run.products.push_back({capitalized(m["name"] | ""), m["product_name"] | "", "", false});
+  if (name == "learn_product_preferences") {
+    int orders = result["new_orders"] | 0, matched = result["matched"].size(), left = result["no_product"].size();
+    int unreadable = result["unreadable_orders"].size();
+    run.chips.push_back({orders ? "read " + counted(orders, "new order", "new orders") : String("no new orders"), false});
+    if (matched) run.chips.push_back({"matched " + String(matched), false});
+    if (left) {
+      run.chips.push_back({String(left) + " without a product", false});
+      run.products.push_back({"No product", joinNames(result["no_product"]), "", false, true});
+    }
+    if (unreadable) run.chips.push_back({counted(unreadable, "order", "orders") + " unreadable", true});
+    for (JsonObjectConst o : result["unreadable_orders"].as<JsonArrayConst>())
+      run.products.push_back({"Order " + o["order_id"].as<String>(), o["why"] | "", "", true});
+    return;
+  }
+  int total = result["lines"].size(), guessed = 0, failed = 0;
+  for (JsonObjectConst line : result["lines"].as<JsonArrayConst>()) {
+    String status = line["status"] | "";
+    if (status == "top_match") {
+      guessed++;
+      run.products.push_back({capitalized(line["item"] | ""), line["product_name"] | "", "top match", false});
+    } else if (status == "failed") {
+      failed++;
+      run.products.push_back({capitalized(line["item"] | ""), whyFailed(line["reason"] | ""), "", true});
+    }
+  }
+  if (!total) return run.chips.push_back({"nothing needed", false});
+  run.chips.push_back({"cart: " + String(total - failed) + " of " + String(total), false});
+  if (guessed) run.chips.push_back({counted(guessed, "top match", "top matches"), false});
+  if (failed) run.chips.push_back({String(failed) + " failed", true});
+  if (!result["matching_failed"].isNull()) run.chips.push_back({"couldn't check past orders", true});
 }
 
 String secondsText(JsonVariantConst ms) { return ms.isNull() ? String("–") : String(ms.as<float>() / 1000, 1) + " s"; }
@@ -295,7 +319,12 @@ void addRun(JsonObjectConst turn) {
   run.heard = turn["heard"] | "";
   run.said = turn["said"] | "";
   run.error = turn["error"] | "";
-  for (JsonObjectConst call : turn["tool_calls"].as<JsonArrayConst>()) run.chips.push_back(chipFor(call));
+  for (JsonObjectConst call : turn["tool_calls"].as<JsonArrayConst>()) {
+    String name = call["name"] | "";
+    JsonObjectConst result = call["result"];
+    if ((name == "learn_product_preferences" || name == "fill_cart") && result["failed"].isNull()) addOrdering(run, name, result);
+    else run.chips.push_back(chipFor(call));
+  }
   if (run.chips.empty()) run.chips.push_back({"no change", false});
   JsonObjectConst latency = turn["latency_ms"];
   run.details = "speech-to-text " + secondsText(latency["stt"]) + " · model " + secondsText(latency["llm"]) +

@@ -131,10 +131,12 @@
   }
   .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 0 10px; }
   .list-head .count { margin-right: auto; } /* the count beside the heading, Reset on the right */
+  .list-head .button { min-height: 32px; padding: 6px 14px; font-size: 13px; background: var(--surface-2); }
+  .list-head .button:hover { background: var(--hairline); }
   .list h2 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; letter-spacing: -0.8px; }
   .count { color: var(--ink-muted); font-size: 13px; font-weight: 500; letter-spacing: -0.13px; font-variant-numeric: tabular-nums; }
-  ul.items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
-  @media (max-width: 520px) { ul.items { grid-template-columns: 1fr; } }
+  ul.items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
+  @media (max-width: 520px) { ul.items { grid-template-columns: minmax(0, 1fr); } }
   ul.items li {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 12px 10px; margin: 0 -10px; border-radius: var(--rounded-md);
@@ -152,6 +154,8 @@
   ul.items li.off { opacity: .45; }
   ul.items.enter li { animation: rise .6s var(--ease-out) both; animation-delay: calc(var(--i) * 35ms); }
   .name { display: inline-block; }
+  .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .product { color: var(--ink-muted); font-size: 12px; letter-spacing: -0.12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .name::first-letter { text-transform: uppercase; }
   .qty { color: var(--ink-muted); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
   ul.items li.empty {
@@ -192,9 +196,17 @@
     display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px;
     color: var(--ink-muted); font-size: 12px; letter-spacing: -0.12px; font-variant-numeric: tabular-nums;
   }
-  .line { display: grid; grid-template-columns: 52px 1fr; align-items: baseline; gap: 8px; margin: 6px 0 0; }
+  .line { display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: baseline; gap: 8px; margin: 6px 0 0; }
   .line b { color: var(--ink-muted); font-weight: 500; font-size: 13px; letter-spacing: -0.13px; }
   .run .error { color: var(--semantic-error); font-size: 13px; margin-top: 8px; }
+  .products { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13px; letter-spacing: -0.13px; min-width: 0; }
+  .products li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .products .item { flex: none; color: var(--ink); }
+  .products .item::first-letter { text-transform: uppercase; }
+  .products .of { color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .products .note { flex: none; color: var(--ink-muted); background: var(--surface-1); border-radius: var(--rounded-sm); padding: 0 6px; }
+  .products li.bad .of { color: var(--semantic-error); }
+  .products li.wrap .of { white-space: normal; } /* the Items still without a Product: every name matters */
   details { margin-top: 12px; font-size: 13px; color: var(--ink-muted); }
   summary {
     display: inline-block; cursor: pointer; list-style: none; color: var(--ink);
@@ -343,7 +355,8 @@
       next.set(key, `${item.quantity} ${item.status}`);
       const product = item.product_name ? ` · ${item.product_name}` : "";
       const button = el("button", { type: "button", class: "flip", title: (off ? "Mark needed" : "Mark not needed") + product },
-        el("span", { class: "name" }, item.name),
+        el("span", { class: "what" }, el("span", { class: "name" }, item.name),
+          ...(item.product_name ? [el("span", { class: "product" }, item.product_name)] : [])),
         el("span", { class: "qty" }, off ? "Not needed" : item.quantity > 1 ? `× ${item.quantity}` : ""));
       button.addEventListener("click", () => setNeeded(item.name, off));
       const row = el("li", { style: `--i: ${i}`, class: off ? "off" : "" }, button);
@@ -395,26 +408,51 @@
         return el("span", { class: "chip" }, `${args.name} → ${result.product_name}`);
       case "forget_product_for_item":
         return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name}: product forgotten`);
+      // Ordering: a few summary chips; each item's Product is in the run card's Products row.
       case "learn_product_preferences": {
         if (result.failed) return el("span", { class: "chip bad" }, `Instacart: ${result.failed}`);
-        const out = [el("span", { class: "chip" }, `read ${result.new_orders} new order${result.new_orders === 1 ? "" : "s"}`)];
-        result.matched.forEach((m) => out.push(el("span", { class: "chip" }, `${m.name} → ${m.product_name}`)));
-        if (result.no_product.length) out.push(el("span", { class: "chip" }, "no product: " + names(result.no_product)));
-        result.unreadable_orders.forEach((o) => out.push(el("span", { class: "chip bad" }, `order ${o.order_id}: ${o.why}`)));
+        const out = [el("span", { class: "chip" }, result.new_orders ? `read ${count(result.new_orders, "new order")}` : "no new orders")];
+        if (result.matched.length) out.push(el("span", { class: "chip" }, `matched ${result.matched.length}`));
+        if (result.no_product.length) out.push(el("span", { class: "chip" }, `${result.no_product.length} without a product`));
+        if (result.unreadable_orders.length) out.push(el("span", { class: "chip bad" }, `${count(result.unreadable_orders.length, "order")} unreadable`));
         return out;
       }
       case "fill_cart": {
         if (result.failed) return el("span", { class: "chip bad" }, `Instacart: ${result.failed}`);
         const lines = result.lines || [];
-        const out = [el("span", { class: "chip" }, `cart: ${lines.filter((l) => l.status !== "failed").length} of ${lines.length} added`)];
+        if (!lines.length) return el("span", { class: "chip" }, "nothing needed");
+        const guessed = lines.filter((l) => l.status === "top_match").length;
+        const failed = lines.filter((l) => l.status === "failed").length;
+        const out = [el("span", { class: "chip" }, `cart: ${lines.length - failed} of ${lines.length}`)];
+        if (guessed) out.push(el("span", { class: "chip" }, count(guessed, "top match")));
+        if (failed) out.push(el("span", { class: "chip bad" }, `${failed} failed`));
         if (result.matching_failed) out.push(el("span", { class: "chip bad" }, "couldn't check past orders"));
-        lines.filter((l) => l.status === "top_match").forEach((l) => out.push(el("span", { class: "chip" }, `top match: ${l.item} → ${l.product_name}`)));
-        lines.filter((l) => l.status === "failed").forEach((l) => out.push(el("span", { class: "chip bad" }, `failed: ${l.item} (${l.reason})`)));
         return out;
       }
       default:
         return el("span", { class: "chip" }, name);
     }
+  }
+
+  function count(n, word) { return `${n} ${word}${n === 1 ? "" : word.endsWith("ch") ? "es" : "s"}`; }
+
+  const WHY = { sold_out: "sold out", not_found: "not found", unavailable: "unavailable", not_added: "didn't go in", more_than_nine: "more than nine" };
+
+  // What ordering did per item: Products matched, guesses and failures, for the run card.
+  function productRows(turn) {
+    const rows = [];
+    for (const { name, result } of turn.tool_calls) {
+      if (!result || result.failed) continue;
+      if (name !== "learn_product_preferences" && name !== "fill_cart") continue;
+      (result.matched || []).forEach((m) => rows.push({ item: m.name, of: m.product_name }));
+      (result.lines || []).forEach((l) => {
+        if (l.status === "top_match") rows.push({ item: l.item, of: l.product_name, note: "top match" });
+        if (l.status === "failed") rows.push({ item: l.item, of: WHY[l.reason] || l.reason, bad: true });
+      });
+      if ((result.no_product || []).length && name === "learn_product_preferences") rows.push({ item: "No product", of: names(result.no_product), wrap: true });
+      (result.unreadable_orders || []).forEach((o) => rows.push({ item: `Order ${o.order_id}`, of: o.why, bad: true }));
+    }
+    return rows;
   }
 
   function chips(turn) {
@@ -432,6 +470,13 @@
       el("div", { class: "line" }, el("b", {}, "Did"), el("span", { class: "chips" }, ...chips(turn))),
       el("div", { class: "line" }, el("b", {}, "Said"), el("span", {}, turn.said)),
     );
+    const rows = productRows(turn);
+    if (rows.length) {
+      card.insertBefore(el("div", { class: "line" }, el("b", {}, "Products"),
+        el("ul", { class: "products" }, ...rows.map((r) => el("li", { class: [r.bad && "bad", r.wrap && "wrap"].filter(Boolean).join(" ") },
+          el("span", { class: "item" }, r.item), el("span", { class: "of" }, r.of),
+          ...(r.note ? [el("span", { class: "note" }, r.note)] : []))))), card.lastChild);
+    }
     if (turn.error) card.append(el("div", { class: "error" }, turn.error));
     card.append(el("details", {},
       el("summary", {}, "Details"),

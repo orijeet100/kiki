@@ -18,6 +18,8 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
 ### Changed
+- Ordering in History, on both screens: a few summary chips ("matched 15", "cart: 16 of 17", "1 top match") and a Products row with one line per item, instead of a chip per item (16 chips for one "analyze my order"). Long chips on the Tab5 wrap inside their card instead of running past it.
+- In the browser, List rows show each item's Product under its name, and the Reset button sits on its own surface so it shows on the card. Long Product names no longer widen the page.
 - `clear_list` is now `clear_all_items` (ADR 0036): tool names say what they change. Older logs still show their chip.
 - On the Tab5, the orb pauses whenever a sheet reaches over it, not only while renaming: the taller item sheet does.
 - The Tab5 never waits on the network while drawing: the event stream and requests run in their own task (v0.16). A change to the List shows in under 10 ms instead of 94–126 ms (when a tap flipped a row and waited for Kiki), and no request freezes the screen any more (~100 ms each before).

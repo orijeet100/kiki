@@ -65,7 +65,7 @@ Under "reduce motion" the sphere freezes; captions still appear.
 
 ## The list
 
-In two columns. Title "Grocery list" with the count of Needed items ("4 items") beside it, and a Reset button on the right (v0.17, FR-0.35): the first tap turns it into "Tap again to reset" for three seconds, the second starts the List over (every Frequent item Needed at its usual quantity, every Occasional one Not needed) and shows as a run in History. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
+In two columns. Title "Grocery list" with the count of Needed items ("4 items") beside it, and a Reset button on the right (v0.17, FR-0.35): the first tap turns it into "Tap again to reset" for three seconds, the second starts the List over (every Frequent item Needed at its usual quantity, every Occasional one Not needed) and shows as a run in History. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). In the browser, an item with a Product shows its name under the item's, small, muted and on one line ("Wegmans Grade AA Large Eggs, 18 Count"); the Tab5 keeps rows to the name and shows the Product in the item sheet. Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
 
 Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s.
 
@@ -83,7 +83,7 @@ Every change is on the screen at once and goes to Kiki after; one Kiki refuses g
 
 ## Run cards
 
-Time and source (voice, text, or button for Reset), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. Ordering (v0.17) adds chips for everything it guessed or couldn't do: "cart: 11 of 12 added", "top match: walnuts → Wegmans Chopped Walnuts", "failed: blueberries (sold_out)", "eggs → Wegmans Grade AA Large Eggs, 18 Count", "no product: walnut", and in red "Instacart: signed_out". On the Tab5, analyzing and filling the Cart are one chip each. An error shows in red under them. In the History sheet each card also has Details: per-stage latency, model, raw tool calls. The sheet holds the last 50 runs, newest first: the log's runs on load, live runs added on top.
+Time and source (voice, text, or button for Reset), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. Ordering (v0.17) keeps its chips short ("read 5 new orders", "matched 15", "7 without a product"; "cart: 16 of 17", "1 top match", "1 failed" in red; "Instacart: signed_out" in red) and adds a Products row under Did with one line per item: the item, then its Product muted and cut to one line ("Eggs  Wegmans Grade AA Large Eggs, 18…"); a guess carries a small "top match" tag, a failure says why in red ("Blueberries  sold out"); the items still without a Product are one line that wraps, since every name matters. The last-run line shows only the chips. Both screens show it the same way. An error shows in red under them. In the History sheet each card also has Details: per-stage latency, model, raw tool calls. The sheet holds the last 50 runs, newest first: the log's runs on load, live runs added on top.
 
 ## Other behavior
 
@@ -105,7 +105,7 @@ Time and source (voice, text, or button for Reset), total latency; Heard, Did (c
 
 ## Still open
 
-- **Item sheet in the browser:** the Tab5 has it (v0.16); the browser still flips a row on click, and shows an item's Product only in the row's tooltip.
+- **Item sheet in the browser:** the Tab5 has it (v0.16); the browser still flips a row on click, and shows an item's Product under its name.
 - **Choosing a Product by touch:** a list of Products to pick from on the item sheet, in place of Forget (by voice only for now).
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
