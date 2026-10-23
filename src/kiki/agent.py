@@ -26,7 +26,8 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.settings import ModelSettings
 
-from kiki import tools
+from kiki import ordering, tools
+from kiki.instacart import ADDRESS, InstacartError
 
 DEFAULT_MODEL = "anthropic:claude-haiku-5-5"
 DIDNT_CATCH = "Sorry, I didn't catch that."
@@ -56,6 +57,12 @@ occasional and remove it.
 that are not needed, without naming them ("Milk, eggs and bread. Two more are off this time."). \
 With nothing needed, reply "Your list is empty."
 - After clearing the list, say only how many items were taken off ("Cleared five items.").
+- "Analyze my order" sets learn_product_preferences. "Order the groceries" or "fill the cart" \
+sets fill_cart: Kiki puts the needed items in the store's cart, and the user checks out. Kiki \
+never places or pays for an order.
+- "Use Diamond walnuts for walnuts" goes in set_products (name walnuts, product "Diamond \
+walnuts"). "Forget the walnut product" goes in forget_products.
+- For those four, any short reply will do: Kiki replaces it with what actually happened.
 - If you can't tell what the user wants, reply exactly "Sorry, I didn't catch that." in plain text."""
 
 
@@ -67,6 +74,8 @@ class Deps:
     conn: sqlite3.Connection
     list_at_start: str
     tool_calls: list[dict] = field(default_factory=list)
+    # Replies Kiki writes itself from what ordering did; they replace the model's reply.
+    replies: list[str] = field(default_factory=list)
 
 
 class Item(BaseModel):
@@ -89,6 +98,142 @@ class BuyingPattern(BaseModel):
 class Rename(BaseModel):
     name: str
     new_name: str
+
+
+class ProductChoice(BaseModel):
+    name: str = Field(description="Item name, e.g. 'walnuts'")
+    product: str = Field(description="The product as said, e.g. 'Diamond walnuts'")
+
+
+NUMBERS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+]
+TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def spoken(n: int) -> str:
+    """Numbers the way they are spoken (FR-0.10), up to ninety-nine."""
+    if n < 20:
+        return NUMBERS[n]
+    if n < 100:
+        return TENS[n // 10 - 2] + ("-" + NUMBERS[n % 10] if n % 10 else "")
+    return "many"
+
+
+def items(n: int) -> str:
+    return f"{spoken(n)} item{'' if n == 1 else 's'}"
+
+
+def product_said(name: str) -> str:
+    """A Product name to say aloud: without the size after the comma."""
+    return name.split(",")[0].strip()
+
+
+# Why an Instacart job stopped, said plainly (FR-0.40).
+INSTACART_SAYS = {
+    "signed_out": "Instacart needs you in Chrome on the laptop.",
+    "needs_human": "Instacart needs you in Chrome on the laptop.",
+    "wrong_address": f"Instacart is set to another address. Switch it to {ADDRESS} in Chrome.",
+    "page_changed": "I couldn't finish, Instacart changed its page.",
+    "no_page": "Instacart didn't load. Try again in a minute.",
+}
+NO_EXTENSION = "I can't reach Instacart in Chrome. Is the Kiki extension on?"
+
+
+def learned_reply(result: dict) -> str:
+    matched, left = len(result["matched"]), len(result["no_product"])
+    if not result["new_orders"] and not matched:
+        first = "No new orders, and nothing new to match."
+    else:
+        first = f"Matched {items(matched)} to your products."
+    if result["unreadable_orders"]:
+        return first + " I couldn't read one of your orders."
+    if not left:
+        return first
+    return f"{first} {items(left).capitalize()} still {'has' if left == 1 else 'have'} no product."
+
+
+def cart_reply(result: dict) -> str:
+    lines = result["lines"]
+    if not lines:
+        return "Your list is empty, so there's nothing to add."
+    added = [line for line in lines if line["status"] != "failed"]
+    failed = [line["item"] for line in lines if line["status"] == "failed"]
+    guessed = sum(line["status"] == "top_match" for line in lines)
+    if not added:
+        return "I couldn't add anything to your cart."
+    first = f"Your cart is ready with {items(len(added))}."
+    if result.get("matching_failed"):
+        return first + " I couldn't check your past orders, so I used top matches."
+    parts = []
+    if failed:
+        parts.append(
+            f"{failed[0]} failed"
+            if len(failed) == 1
+            else f"{items(len(failed))} failed"
+        )
+    if guessed:
+        parts.append(
+            f"{spoken(guessed)} {'was a top match' if guessed == 1 else 'were top matches'}"
+        )
+    if not parts:
+        return first
+    said = ", and ".join(parts) + ", details on the screen."
+    return f"{first} {said[0].upper()}{said[1:]}"
+
+
+def chosen_reply(result: dict) -> str:
+    if "not_found" in result:
+        return f"{result['not_found'].capitalize()} isn't on your list."
+    if "no_results" in result:
+        return f"I couldn't find {result['no_results']}."
+    return (
+        f"{result['name'].capitalize()} is now {product_said(result['product_name'])}."
+    )
+
+
+def forgotten(conn: sqlite3.Connection, name: str) -> dict:
+    return tools.forget_product_for_item(conn, name)
+
+
+def forgotten_reply(result: dict) -> str:
+    if "not_found" in result:
+        return f"{result['not_found'].capitalize()} isn't on your list."
+    return f"{result['name'].capitalize()} has no product now."
+
+
+def _order(ctx: RunContext[Deps], tool: str, run, reply, /, **args) -> dict:
+    """Run an ordering step, log it like a tool, and say what happened instead of the model."""
+    try:
+        result = run(ctx.deps.conn, **args)
+        ctx.deps.replies.append(reply(result))
+    except InstacartError as e:
+        result = {"failed": e.code}
+        ctx.deps.replies.append(INSTACART_SAYS.get(e.code, NO_EXTENSION))
+    except (AgentRunError, ModelAPIError) as e:  # the matching request
+        result = {"failed": f"{type(e).__name__}: {e}"}
+        ctx.deps.replies.append("I couldn't match your products, please try again.")
+    ctx.deps.tool_calls.append({"name": tool, "args": args, "result": result})
+    return result
 
 
 def _snapshot(conn: sqlite3.Connection) -> str:
@@ -121,6 +266,10 @@ def update_list(
     set_buying_patterns: list[BuyingPattern] | None = None,
     renames: list[Rename] | None = None,
     clear: bool = False,
+    learn_product_preferences: bool = False,
+    fill_cart: bool = False,
+    set_products: list[ProductChoice] | None = None,
+    forget_products: list[str] | None = None,
 ) -> str:
     """Make every list change the user asked for, in one call, and give the spoken reply.
 
@@ -133,10 +282,14 @@ def update_list(
         set_buying_patterns: Make items frequent or occasional.
         renames: New names for existing items.
         clear: True to make every item not needed.
+        learn_product_preferences: True for "analyze my order".
+        fill_cart: True for "order the groceries": fill the store's cart, never check out.
+        set_products: The product to use for an item from now on.
+        forget_products: Items whose product to forget.
     """
     # Every step is idempotent, so a retry after ModelRetry can safely re-apply them.
     if clear:
-        _call(ctx, "clear_list")
+        _call(ctx, "clear_all_items")
     if remove:
         _call(ctx, "remove_items", names=remove)
     if add:
@@ -154,7 +307,28 @@ def update_list(
         )
     for change in renames or []:
         _call(ctx, "rename_item", name=change.name, new_name=change.new_name)
-    return reply
+    # Ordering runs after the list changes, so "add milk and order the groceries" has milk.
+    for name in forget_products or []:
+        _order(ctx, "forget_product_for_item", forgotten, forgotten_reply, name=name)
+    for choice in set_products or []:
+        _order(
+            ctx,
+            "set_product_for_item",
+            ordering.choose_product,
+            chosen_reply,
+            name=choice.name,
+            query=choice.product,
+        )
+    if learn_product_preferences:
+        _order(
+            ctx,
+            "learn_product_preferences",
+            ordering.learn_product_preferences,
+            learned_reply,
+        )
+    if fill_cart:
+        _order(ctx, "fill_cart", ordering.fill_cart, cart_reply)
+    return " ".join(ctx.deps.replies[-2:]) if ctx.deps.replies else reply
 
 
 agent = Agent(
@@ -175,9 +349,14 @@ def current_list(ctx: RunContext[Deps]) -> str:
 
 
 @agent.output_validator
-def spoken_style(output: str) -> str:
-    """FR-0.10 guard: a reply must be speakable. (Empty replies are retried by Pydantic AI itself.)"""
+def spoken_style(ctx: RunContext[Deps], output: str) -> str:
+    """FR-0.10 guard: a reply must be speakable. (Empty replies are retried by Pydantic AI itself.)
+
+    Kiki's own ordering replies pass as they are: a retry would run the ordering again.
+    """
     output = output.strip()
+    if ctx.deps.replies:
+        return output
     if re.search(r"[*#`•_]|^\s*-\s|\d", output, re.MULTILINE):
         raise ModelRetry(
             "Spoken reply: no markdown or bullets, write numbers as words."

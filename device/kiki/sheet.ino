@@ -1,6 +1,6 @@
 // The item sheet (v0.16, FR-0.33): tap a List row and a sheet rises from the bottom with that
-// item: this order's quantity (– and +) and Needed or Not needed, Frequent or Occasional, Rename
-// and Remove (Not needed, ADR 0026). Every change is on the screen at once and goes to Kiki after
+// item: this order's quantity (– and +) and Needed or Not needed, Frequent or Occasional, its
+// Product with Forget (v0.17, FR-0.34), Rename and Remove (Not needed, ADR 0026). Every change is on the screen at once and goes to Kiki after
 // (events.ino); one Kiki refuses undoes itself, with the reason in the sheet.
 //
 // The look, in DESIGN.md's tokens: each group sits in a tray (canvas, hairline edge) holding a
@@ -24,7 +24,7 @@ Item editing;  // what the sheet shows; its name is how Kiki knows the item
 lv_obj_t *itemSheet = nullptr;  // built once at start-up, parked just below the screen when closed
 bool itemSheetShown = false, renaming = false;
 lv_obj_t *sheetEyebrow, *sheetTitle, *sheetError, *sheetBody, *sheetNeeded, *sheetNotNeeded;
-lv_obj_t *sheetFrequent, *sheetOccasional, *sheetPatternHint;
+lv_obj_t *sheetFrequent, *sheetOccasional, *sheetPatternHint, *sheetProduct, *sheetForget;
 lv_obj_t *sheetQuantity, *sheetMinus, *sheetPlus, *sheetRemove, *sheetDone, *sheetRename, *sheetClose;
 lv_obj_t *renameBox = nullptr, *renameInput = nullptr, *renameKeys = nullptr;
 lv_timer_t *quantityTimer = nullptr, *itemSheetTimer = nullptr;
@@ -168,6 +168,9 @@ void showSheet() {
   enable(sheetMinus, editing.needed && editing.quantity > 1);
   enable(sheetPlus, editing.quantity < MAX_QUANTITY || !editing.needed);
   enable(sheetRemove, editing.needed);
+  lv_label_set_text(sheetProduct, editing.product.length() ? editing.product.c_str() : "No product yet");
+  lv_obj_set_style_text_color(sheetProduct, editing.product.length() ? INK : INK_MUTED, 0);
+  enable(sheetForget, editing.product.length() > 0);
 }
 
 void showSheetError(const String &text) {
@@ -184,6 +187,7 @@ void refreshItemSheet() {
       editing.needed = item.needed;
       editing.quantity = item.quantity;
       editing.frequent = item.frequent;
+      editing.product = item.product;
     }
   showSheet();
 }
@@ -195,6 +199,7 @@ void showEdit() {
       item.needed = editing.needed;
       item.quantity = editing.quantity;
       item.frequent = editing.frequent;
+      item.product = editing.product;
     }
   showList();
   showSheet();
@@ -259,6 +264,17 @@ void step(int by) {
     quantityTimer = lv_timer_create(sendSettledQuantity, QUANTITY_SETTLE_MS, nullptr);
     lv_timer_set_repeat_count(quantityTimer, 1);
   }
+}
+
+// Forget (FR-0.34): the next Cart finds a Product for it again ("use Diamond walnuts for walnuts"
+// sets one by voice).
+void forgetProduct() {
+  if (editing.product.isEmpty()) return;
+  measureFromTap("forgot product");
+  flushQuantity();
+  editing.product = "";
+  showEdit();
+  sendForget(editing.name);
 }
 
 void removeItem() {
@@ -359,6 +375,7 @@ void onSheetTap(lv_event_t *event) {
   else if (control == sheetMinus) step(-1);
   else if (control == sheetPlus) step(1);
   else if (control == sheetRemove) removeItem();
+  else if (control == sheetForget) forgetProduct();
   else if (control == sheetRename) startRename();
   else if (control == sheetClose && renaming) endRename(false);  // × while renaming: back to the sheet
   else if (control == sheetDone || control == sheetClose) closeItemSheet();
@@ -455,6 +472,18 @@ void buildItemSheet() {
   sheetPatternHint = makeText(pattern, &inter_20, INK_MUTED, "");
   lv_obj_set_style_pad_left(sheetPatternHint, 8, 0);
 
+  lv_obj_t *product = makeTray(sheetBody);  // what the Cart gets for it (v0.17)
+  makeEyebrow(product, "PRODUCT");
+  lv_obj_t *productRow = makeBox(product);
+  lv_obj_set_width(productRow, LV_PCT(100));
+  stackChildren(productRow, LV_FLEX_FLOW_ROW, 14, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+  sheetProduct = makeText(productRow, &inter_24, INK, "");
+  lv_obj_set_flex_grow(sheetProduct, 1);
+  lv_label_set_long_mode(sheetProduct, LV_LABEL_LONG_MODE_DOTS);
+  sheetForget = makePillButton(productRow, "Forget", false);
+  fill(sheetForget, CANVAS);
+  fill(sheetForget, HAIRLINE, LV_STATE_PRESSED);
+
   lv_obj_t *actions = makeBox(sheetBody);
   lv_obj_set_width(actions, LV_PCT(100));
   lv_obj_set_style_pad_top(actions, 6, 0);
@@ -463,7 +492,7 @@ void buildItemSheet() {
   sheetDone = makeActionPill(actions, "Done", true, ON_PRIMARY);
 
   for (lv_obj_t *control : {sheetNeeded, sheetNotNeeded, sheetFrequent, sheetOccasional, sheetMinus, sheetPlus, sheetRemove,
-                            sheetRename, sheetDone, sheetClose})
+                            sheetRename, sheetDone, sheetClose, sheetForget})
     onClick(control, onSheetTap);
   buildRename();
 }
@@ -503,7 +532,7 @@ void tapSheetControl(const String &name) {
   lv_obj_t *control = name == "needed" ? sheetNeeded : name == "notneeded" ? sheetNotNeeded : name == "frequent" ? sheetFrequent
                     : name == "occasional" ? sheetOccasional : name == "minus" ? sheetMinus : name == "plus" ? sheetPlus
                     : name == "remove" ? sheetRemove : name == "rename" ? sheetRename : name == "done" ? sheetDone
-                    : name == "close" ? sheetClose : nullptr;
+                    : name == "close" ? sheetClose : name == "forget" ? sheetForget : nullptr;
   if (!itemSheetShown || !control) return;
   lv_area_t area;
   lv_obj_get_coords(control, &area);

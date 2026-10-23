@@ -27,6 +27,8 @@ For UI work, also read [docs/ui.md](docs/ui.md) (what it shows and does) and [DE
 | ADRs | `docs/adr/NNNN-kebab-title.md`, title states the decision | `0003-gate-audio-with-local-wake-word.md` |
 | Versions and tags | `v0.1`, `v0.2`, `v1` | |
 | Python | PEP 8: `snake_case` functions and files, `PascalCase` classes | `add_items()` |
+| Tools | verb, then what it changes, then `_for_item` when it changes one Item ([ADR 0036](docs/adr/0036-tool-names-say-what-they-change.md)) | `clear_all_items()`, `set_product_for_item()` |
+| Browser extensions | `browser/<name>/`, Manifest V3, loaded unpacked; no build step | `browser/instacart/worker.js` |
 | Env vars | `KIKI_` prefix (except `ANTHROPIC_API_KEY`) | `KIKI_MODEL` |
 | Device sketches | `device/<name>/<name>.ino`, `camelCase` functions, `secrets.h` git-ignored | `device/stream/stream.ino` |
 | Commits | `<area>: <what>` plus IDs when relevant | `tools: add_items keeps existing quantity (FR-0.2)` |
@@ -59,6 +61,7 @@ uv run pytest -m "not voice and not scenario" # instant tests only
 uv run python -m kiki.latency                 # median voice latency from the turn log (NFR-0.3)
 uv run python -m kiki.stt_bench [model ...]   # Whisper models compared: time and word accuracy
 uv run python -m kiki.screen                  # stream the UI to the Tab5 (start Kiki first)
+# chrome://extensions > Developer mode > Load unpacked > browser/instacart  # once, for ordering (v0.17)
 arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream  # flash the Tab5
 powershell -ExecutionPolicy Bypass -File device/kiki/build.ps1 -Port COM9  # flash the native Tab5 UI
 powershell -ExecutionPolicy Bypass -File device/kiki/serial.ps1 "tapitem 0" "wait 2"  # Tab5 test commands, prints its log

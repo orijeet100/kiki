@@ -26,6 +26,12 @@ v0.14 (Tab5: a thin client of the laptop over the home Wi-Fi)
   Tab5 mic ──UDP :8768──> Tab5Mic ──> WakeGate ... PiperTTSService ──> Tab5Speaker ──TCP :8769──> Tab5 speaker
   ui.html in a headless Chrome ──screen.py──JPEG frames, TCP :8767──> Tab5 screen
   Tab5 touches ──"down|move|up x y"──> screen.py ──> touch events in the page
+
+v0.17 (ordering: Instacart through a Kiki extension in the owner's own Chrome)
+  "order the groceries" ──> update_list ──> ordering.py ──> instacart.run_job
+      ──> chrome.exe opens instacart.com/...#kiki-<job>-<port> in the running Chrome
+      ──> browser/instacart/worker.js: GET /instacart/job, does it in that tab, POST /instacart/result
+  past Orders ──> orders, order_lines, products (kiki.db) ──> one Claude request matches Items to Products
 ```
 
 | Layer | Choice | ADR |
@@ -43,6 +49,8 @@ v0.14 (Tab5: a thin client of the laptop over the home Wi-Fi)
 | Device links | Plain sockets opened by the Tab5: screen TCP 8767, mic UDP 8768, speaker TCP 8769 | [0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md), [0029](docs/adr/0029-tab5-mic-over-udp-speaker-over-tcp-paced-by-the-clock.md) |
 | Device screen | The UI drawn natively by the Tab5 with LVGL (`device/kiki`); the streamed page (`device/stream`) remains an alternative | [0033](docs/adr/0033-draw-the-ui-natively-on-the-tab5.md), [0028](docs/adr/0028-stream-the-real-ui-page-to-the-tab5.md) |
 | Device audio | Mic and speaker take turns; volume in the samples under a fixed ceiling | [0030](docs/adr/0030-the-tab5-mic-and-speaker-take-turns.md), [0031](docs/adr/0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) |
+| Store (v0.17) | Instacart (Wegmans), through Kiki's own Chrome extension in the owner's signed-in Chrome; Kiki fills the Cart, the owner checks out | [0034](docs/adr/0034-reach-instacart-through-a-kiki-extension-in-the-owners-chrome.md) |
+| Products (v0.17) | Learned from what was placed in past Orders; Claude says which Products are which Item, code picks the most ordered | [0035](docs/adr/0035-learn-each-items-product-from-what-was-placed.md) |
 
 ## Code layout
 
@@ -62,6 +70,9 @@ src/kiki/
               Tab5Mic and Tab5Speaker (v0.14)
   screen.py   streams the UI page to the Tab5 and replays its touches (v0.14)
   screen_keyboard.js  the on-screen keyboard injected into the page streamed to the Tab5
+  ordering.py the ordering flows (v0.17): read new Orders, match Items to Products, fill the Cart
+  instacart.py  Kiki's side of the extension (v0.17): one job at a time, opened as a Chrome tab
+browser/instacart/  the Kiki for Instacart extension (v0.17, ADR 0034): manifest.json, worker.js
 device/       the Tab5's programs, one Arduino sketch per folder (v0.14, ADR 0032)
   check/      screen, touch, mic and speaker check
   stream/     the Tab5 program: streamed screen, touch, mic, speaker, volume bar
@@ -77,6 +88,7 @@ tests/
   test_ui.py          UI server over real HTTP with a scripted model
   test_voice.py       wake gate with a fake detector; real models on Piper-synthesized speech (marked `voice`)
   test_tab5.py        the laptop's side of the Tab5's links, over real sockets
+  test_ordering.py    ordering with a fake extension and a fake matcher (v0.17)
   conftest.py         `speak`: Piper-synthesized speech for the voice tests
 ```
 
@@ -86,7 +98,7 @@ tests/
 
 1. A command arrives as text (typed in v0.1, transcribed in v0.2).
 2. `run_turn` snapshots the list once, then calls `agent.run_sync` with only the command. The model sees the static instructions, the snapshot and the command. No previous turns ([ADR 0009](docs/adr/0009-single-turn-commands.md)).
-3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, set_usual_quantities, set_buying_patterns, renames, clear)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities, usual quantities, buying patterns, renames), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply.
+3. **One model request** ([ADR 0018](docs/adr/0018-one-model-request-per-command.md)). The model either answers in plain text (questions, "Sorry, I didn't catch that.") or calls the output function `update_list(reply, add, remove, set_quantities, set_usual_quantities, set_buying_patterns, renames, clear, learn_product_preferences, fill_cart, set_products, forget_products)` once, with every change from the sentence and the spoken reply. `update_list` runs the plain tools in a fixed order (clear, remove, add, set quantities, usual quantities, buying patterns, renames, then the ordering steps: forget products, set products, analyze, fill the Cart), records each in `Deps.tool_calls`, and returns `reply` as the output. No second request is needed to phrase the reply. When an ordering step ran, Kiki writes the reply itself from what happened (see [Ordering](#ordering-v017)); the model can't know the result when it writes `reply`.
 4. `run_turn` returns a `turn` event. `events.py` appends it to the log. The caller prints or speaks `said`.
 
 **Why the snapshot is taken once:** Pydantic AI re-renders instructions on every model request inside a run, retries included. A live list read after a retry would show "bread x2", and the model would bump "add another bread" again (found by scenario 3 in v0.1).
@@ -99,7 +111,7 @@ tests/
 |---|---|
 | Argument validation | `update_list` arguments are typed (quantities `>= 1`, `buying_pattern` is `frequent` or `occasional`). Invalid arguments never reach `tools.py`; the model gets a retry prompt. |
 | Tool errors | A tool result with an `error` key is raised as `ModelRetry`, so the model sees the message and can correct itself. The call is still logged. |
-| Output guard | `spoken_style` output validator rejects markdown, bullets, underscores and digits with a retry, for plain-text replies and for the `reply` of `update_list` (FR-0.10). Empty replies are retried by Pydantic AI itself. |
+| Output guard | `spoken_style` output validator rejects markdown, bullets, underscores and digits with a retry, for plain-text replies and for the `reply` of `update_list` (FR-0.10). Empty replies are retried by Pydantic AI itself. Kiki's own ordering replies pass as they are: a retry would run the ordering again, and a Product's name may hold digits. |
 | Retries | `retries=2`. They also bound the number of model requests per turn. |
 | Request timeout | `timeout=10` seconds: a stalled request becomes "I can't reach the internet right now." instead of hanging for the client's default ten minutes. |
 | Model settings | `thinking="low"` (unified setting, maps to each provider's effort), `max_tokens=4096`. |
@@ -113,7 +125,7 @@ tests/
 | API error (`ModelHTTPError`) | "Something went wrong, please try again." | `API error <status>` |
 | Any other run error | "Something went wrong, please try again." | exception name and message |
 
-Tools that ran before a failure stay in `tool_calls`, so the log still shows them (for example, a `clear_list` that ran before the connection dropped).
+Tools that ran before a failure stay in `tool_calls`, so the log still shows them (for example, a `clear_all_items` that ran before the connection dropped).
 
 **SQLite and threads:** Pydantic AI runs sync functions in worker threads and voice turns run in a thread too, so `db.connect` uses `check_same_thread=False`. Only one `update_list` runs per turn and turns are sequential, so the connection is never used concurrently.
 
@@ -165,14 +177,18 @@ Audio stays in the home (NFR-0.8): with the laptop's mic it never leaves the lap
 | `GET /speaking-orb.js` | the vendored orb script ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)) |
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
-| `POST /item` | `{"name": "...", "needed": true}`, `{"name": "...", "quantity": 3}`, `{"name": "...", "buying_pattern": "frequent"}` or `{"name": "...", "new_name": "..."}` → 200 with the tool result; a click on the list (FR-0.27) or an edit in the Tab5's item sheet (FR-0.33). Runs `add_items`, `remove_items`, `set_quantity`, `set_buying_pattern` or `rename_item` under the turn lock, publishes a `list` event, and is not a turn: no model, nothing in the turn log. 409 when the tool refuses (a name that's taken), 404 when a quantity or name is for an unknown item, 400 unless exactly one change is given (quantity 1–99) |
+| `POST /item` | `{"name": "...", "needed": true}`, `{"name": "...", "quantity": 3}`, `{"name": "...", "buying_pattern": "frequent"}`, `{"name": "...", "new_name": "..."}` or `{"name": "...", "forget_product": true}` → 200 with the tool result; a click on the list (FR-0.27) or an edit in the Tab5's item sheet (FR-0.33, FR-0.34). Runs `add_items`, `remove_items`, `set_quantity`, `set_buying_pattern`, `rename_item` or `forget_product_for_item` under the turn lock, publishes a `list` event, and is not a turn: no model, nothing in the turn log. 409 when the tool refuses (a name that's taken), 404 when a quantity or name is for an unknown item, 400 unless exactly one change is given (quantity 1–99) |
+| `POST /reset` | `{}` → 200 with `reset_list`'s result: the Reset button, after its second tap (FR-0.35). Logged as a turn with `source: "button"` and the List as it was in `args.before`, so History shows it and the log can undo it |
+| `GET /instacart/job` | the job waiting for the extension, or 204 (v0.17, ADR 0034) |
+| `POST /instacart/result` | the extension's answer, `{id, ok, data}` or `{id, ok: false, error}`; ignored unless `id` is the waiting job's |
+| `POST /instacart/progress` | `{id, done, total}` while the Cart fills; published as a `progress` event |
 
 The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns (Needed items first, then Not needed Frequent items dimmed; a click flips one), and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
 **Safety, since any web page in the browser could try to reach a local server:**
 - Binds to 127.0.0.1, unless `KIKI_UI_HOST` opens it to the home network for a Tab5 program that follows `/events` itself (NFR-0.7, [ADR 0027](docs/adr/0027-the-tab5-is-a-thin-client-over-the-home-network.md)). There is no password yet.
 - Rejects requests whose `Host` isn't `localhost` or an IP address (blocks DNS rebinding: an IP can't be rebound to another site, and the Tab5 addresses the laptop by its IP).
-- `POST /command` and `POST /item` require `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers.
+- Every `POST` requires `Content-Type: application/json`, which other sites can't send without a CORS preflight that the server never answers. The extension can, because its host permission covers `http://localhost/*`.
 - Commands and item names are 1 to 200 characters; `needed` must be `true` or `false`.
 
 **One Kiki at a time (FR-0.15):** the voice loop and `kiki.ui` bind the UI port first. On Windows the server doesn't set `SO_REUSEADDR` (which there would let a second process share the port), so a second copy fails with "Kiki is already running" before loading any models. Two copies used to both answer every command.
@@ -215,13 +231,13 @@ The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so 
 
 | File | What |
 |---|---|
-| `kiki.ino` | setup, the main loop and its stall log, the shared state and the serial test commands (`tap`, `tapitem`, `tapsheet`, `key`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
-| `events.ino` | `networkTask`: `GET /events` and the `POST /item` and `POST /command` requests; the loop turns its events (snapshot, state, list, turn) into the screen's state, and holds Kiki's List while edits are on their way |
-| `sheet.ino` | the item sheet (FR-0.33): this order's quantity and Needed, Frequent or Occasional, rename, remove; built once at start-up (rename mode and its keyboard too, hidden), slid up from below the screen |
+| `kiki.ino` | setup, the main loop and its stall log, the shared state and the serial test commands (`tap`, `tapitem`, `tapsheet`, `tapreset`, `key`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
+| `events.ino` | `networkTask`: `GET /events` and the `POST /item`, `POST /reset` and `POST /command` requests; the loop turns its events (snapshot, state, list, turn, progress) into the screen's state, and holds Kiki's List while edits are on their way |
+| `sheet.ino` | the item sheet (FR-0.33): this order's quantity and Needed, Frequent or Occasional, the Product with Forget (FR-0.34), rename, remove; built once at start-up (rename mode and its keyboard too, hidden), slid up from below the screen |
 | `screen.ino`'s keyboard | `makeKeyboard`: our own layout on an LVGL button matrix (LVGL's keyboard widget types its key labels, and ours say "space" and "Send"); three layers, one-shot shift, a key handler that sends `LV_EVENT_READY` (action key) or `LV_EVENT_CANCEL` (hide key) to its text box; the white action key and the quiet keys' small labels are drawn in a draw-task event. `key <name>` over serial presses a key through the same handler |
 | `serial.ps1` | sends test commands over USB serial and prints the log: `serial.ps1 "tapitem 0" "wait 2" "tapsheet plus" ...` |
 | `shot.ps1` | saves what the Tab5 shows as a PNG through the `shot` command: `shot.ps1 -Out sheet.png "tapitem 0" "wait 1.5"` |
-| `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List, text box and keyboard, History sheet, volume bar |
+| `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List with its two-tap Reset, text box and keyboard, History sheet, volume bar |
 | `orb.ino` | the Speaking Orb's particle field and shapes, ported; the speaking pulse from the reply's words |
 | `audio.ino` | mic and speaker, as in `device/stream` |
 
@@ -268,13 +284,40 @@ arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc
 
 The port is whatever the Tab5 shows up as (`arduino-cli board list`). If an upload can't connect, hold Reset for 2 s until the green LED blinks fast (download mode), upload, then press Reset once to start the program. `device/check` is a standalone check of the screen, touch, mic and speaker.
 
+## Ordering (v0.17)
+
+Kiki fills the Store's Cart; the owner checks out in the Instacart app. Kiki never places or pays for an order (NFR-0.9).
+
+**How Kiki reaches Instacart** ([ADR 0034](docs/adr/0034-reach-instacart-through-a-kiki-extension-in-the-owners-chrome.md)). The owner loads `browser/instacart` once in their own Chrome (`chrome://extensions`, Developer mode, Load unpacked). `instacart.run_job(kind, **payload)` stores one job, then runs `chrome.exe https://www.instacart.com/store/account/orders#kiki-<job id>-<port>`, which opens a tab in the running Chrome (or starts it, signed in). The extension's service worker sees that tab, fetches the job from `GET /instacart/job`, does it in that tab only, posts `POST /instacart/result` and closes the tab. It runs its page steps with `chrome.scripting.executeScript` in the page's own world, where Instacart's data is (`window.__APOLLO_CLIENT__`). No Allow dialog, no second profile, no Claude tokens. `run_job` waits up to five minutes; no answer is `no_answer` (the extension isn't loaded, or Chrome is stuck).
+
+| Job | What the extension does | Returns |
+|---|---|---|
+| `read_orders {known}` | Reads the first page of the order history (10 orders), then each delivered Order from the Store it doesn't know | `{orders: [{id, retailer, address, delivered_at, state, list_items, lines: [{status, quantity, quantity_type, product_id, product_name}]}]}` |
+| `search {query}` | The Store's search page | `{results: [{id, name}]}`, the top five |
+| `fill_cart {address, lines: [{item, product_id, query, quantity}]}` | For each line: the Product's page (or the top search result when it has none), checks the address, presses **Add to cart** (one), then sets the exact count in the "N in cart" menu and reads it back. A sold-out Product falls back to the next search result | `{lines: [{..., status: added \| top_match \| failed, reason, product_id, product_name}]}` |
+
+What the page gives, per line of an Order: `item` is what was placed, `currentItem` is what came (a substitute when `status` is `replaced`), `selectedQuantityValue` the count. The order history card gives the Store's name ("Wegmans +8" when it shows eight more pictures) and its item count, which must match the lines read.
+
+**Error codes** stop the whole job and become one spoken sentence (FR-0.40): `signed_out` and `needs_human` ("Instacart needs you in Chrome on the laptop."), `wrong_address`, `page_changed` (the page didn't have what the code looks for), `no_page` (didn't load in 30 s); and from Kiki's side `no_answer` and `no_chrome` ("I can't reach Instacart in Chrome. Is the Kiki extension on?"). Per-line problems (`unavailable`, `sold_out`, `not_found`, `not_added`, `more_than_nine`) only fail that line.
+
+**The flows** (`ordering.py`):
+
+- `read_new_orders`: asks for the Orders Kiki doesn't know, keeps the delivered ones to `KIKI_ADDRESS` (the first time, the seven newest), checks each line (a known status, a numeric product id, a name, a count; as many lines as the order history says) and saves it with `save_order`. An Order that fails a check isn't saved and is reported in `unreadable_orders` with why, for example `unknown status 'refunded'`: Kiki doesn't guess what a new word means.
+- `learn_product_preferences` ("analyze my order", FR-0.36): reads new Orders, then gives every Item without a Product one. **One Claude request** (`match_products`, ADR 0035) gets the Items' names and the placed Products' names and says which Products are which Item; `preferred_product` then picks, in code, the one in the most Orders, the most recent on a tie (FR-0.37). It never changes an Item that has a Product.
+- `fill_cart` ("order the groceries", FR-0.39): reads new Orders, matches only the Needed Items without a Product, then sends every Needed Item to the extension at its quantity. An Item still without a Product gets the top search result for this Cart only; it's learned once it shows up in a delivered Order. If the matching request fails, the fill goes on with top results (FR-0.40).
+- `choose_product` ("use Diamond walnuts for walnuts", FR-0.38): a placed Product whose name has every word said, else the top search result.
+
+**Replies** are Kiki's own, at most two sentences, because the model can't know the result when it writes `reply`: "Your cart is ready with twelve items. Blueberries failed, and two were top matches, details on the screen." The History chips have the details: every top match and failure, every Product matched, every Order that couldn't be read.
+
+**Timing** (measured 2026-10-23): a page load and its step take about 3 to 5 s, so reading five Orders takes about 25 s and filling 18 Items about two minutes. The turn holds the turn lock all that time; the state line shows "Filling cart, 4 of 12".
+
 ## Matching names
 
 `normalize()` in `tools.py` maps singular and plural to one key with suffix rules: lowercase, collapse spaces, drop a trailing `s` (not `ss`, `us`, `is`), then `ie` to `y` and drop the `e` of `oe`, `che`, `she`, `xe`, `sse`. The key isn't always a real word ("cookie" becomes "cooky"); it only has to match both forms. Irregular plurals ("loaves") aren't handled.
 
 ## Data model
 
-One table, `items`: both the Item and its state for the next Order ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). Nothing is ever deleted.
+`items` holds both the Item and its state for the next Order ([ADR 0026](docs/adr/0026-one-item-table-holds-the-next-order-state.md), terms in [CONTEXT.md](CONTEXT.md)). Nothing is ever deleted. Since v0.17 three more tables hold the Store's side: `products`, `orders` and `order_lines` ([ADR 0035](docs/adr/0035-learn-each-items-product-from-what-was-placed.md)).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -287,14 +330,21 @@ One table, `items`: both the Item and its state for the next Order ([ADR 0026](d
 | `usual_quantity` | integer ≥ 1, default 1 | A new item's first quantity; re-adding uses it |
 | `created_at` | text (ISO 8601) | |
 | `updated_at` | text (ISO 8601) | |
+| `product_id` | integer, nullable, → `products.id` | The Product the Cart gets for this Item; empty until one is learned or chosen |
+
+`products`: `id` (the Store's own id, so the page is `/store/<store>/products/<id>`), `name`.
+
+`orders`: `id` (the order history's id), `delivered_at`. Only delivered Orders from `KIKI_STORE` to `KIKI_ADDRESS`.
+
+`order_lines`: `order_id`, `product_id` (what was **placed**, never the substitute), `quantity`, `status` (`found`, `substituted`, `missing`); one per Product per Order.
 
 **The List** is every Frequent item plus the Needed Occasional ones, Needed first (`read_list`). A Not needed Occasional item is hidden but still known, so "add butter" brings it back at its usual quantity.
 
-**Files from before v0.12:** `db.connect` renames an `items` table without `buying_pattern` to `items_before_v0_12` and starts an empty List. The old rows are kept, not migrated.
+**Files from before v0.12:** `db.connect` renames an `items` table without `buying_pattern` to `items_before_v0_12` and starts an empty List. The old rows are kept, not migrated. A v0.12 to v0.16 file keeps its List: `db.connect` adds `items.product_id` and the three new tables.
 
 ## Tools
 
-All tools are plain functions taking and returning JSON-compatible values ([ADR 0008](docs/adr/0008-tools-are-plain-functions.md)). The model never calls them directly; it calls `update_list`, which calls them.
+All tools are plain functions taking and returning JSON-compatible values ([ADR 0008](docs/adr/0008-tools-are-plain-functions.md)). The model never calls them directly; it calls `update_list`, which calls them. Names say what they change, with `_for_item` when they change one Item ([ADR 0036](docs/adr/0036-tool-names-say-what-they-change.md)).
 
 | Tool | Input | Output | Notes |
 |---|---|---|---|
@@ -304,8 +354,14 @@ All tools are plain functions taking and returning JSON-compatible values ([ADR 
 | `set_buying_pattern` | `name, buying_pattern` | `{name, buying_pattern}` or `{not_found: name}` | Frequent or Occasional (FR-0.23) |
 | `rename_item` | `name, new_name` | `{name, new_name}`, `{not_found: name}` or `{error}` | Same item, new name; an error if the new name is another item (FR-0.24) |
 | `remove_items` | `names: [string]` | `{removed: [...], not_found: [...]}` | Makes items Not needed, whatever the quantity; already Not needed counts as not found (FR-0.21) |
-| `read_list` | none | `{items: [{name, quantity, buying_pattern, status}]}` | The List. Builds the snapshot; not offered to the model, since the snapshot already answers questions (FR-0.19) |
-| `clear_list` | none | `{removed: [{name, quantity}]}` | Every item Not needed, no confirmation; returns the ones that were Needed (FR-0.26, [ADR 0012](docs/adr/0012-clear-list-without-confirmation.md)) |
+| `read_list` | none | `{items: [{name, quantity, buying_pattern, status, product_name}]}` | The List. Builds the snapshot; not offered to the model, since the snapshot already answers questions (FR-0.19) |
+| `clear_all_items` | none | `{removed: [{name, quantity}]}` | Every item Not needed, no confirmation; returns the ones that were Needed (FR-0.26, [ADR 0012](docs/adr/0012-clear-list-without-confirmation.md)). Called `clear_list` before v0.17; older logs still say so |
+| `reset_list` | none | `{needed: [{name, quantity}]}` | Starts the List over: Frequent items Needed at their usual quantity, Occasional ones Not needed (FR-0.35). Only the Reset button calls it, never the model |
+| `set_product_for_item` | `name, product_id, product_name` | `{name, product_name}` or `{not_found: name}` | The Product the Cart gets for this Item (FR-0.38) |
+| `forget_product_for_item` | `name` | `{name}` or `{not_found: name}` | The Item has no Product again (FR-0.34, FR-0.38) |
+| `save_order` | `{id, delivered_at, lines: [{product_id, product_name, quantity, status}]}` | `{order_id, lines}` | One delivered Order; a line's Product is what was placed (FR-0.36) |
+| `known_order_ids`, `items_without_product`, `placed_products`, `cart_lines` | | lists | What the ordering flows read |
+| `preferred_product` | `product_ids` | `{id, name, orders, last_ordered}` or null | Of these Products, the one in the most Orders; a tie goes to the most recent (FR-0.37) |
 
 ## Events
 
@@ -333,7 +389,7 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 }
 ```
 
-- `source` is `text` or `voice`. `stt` and `tts` latencies are `null` in v0.1. `llm` is the whole agent run (model requests plus tool time), so in v0.1 it equals `total`.
+- `source` is `text`, `voice` or `button` (the Reset button, v0.17). `stt` and `tts` latencies are `null` in v0.1. `llm` is the whole agent run (model requests plus tool time), so in v0.1 it equals `total`.
 - `error` is null, or a short string when the turn failed (for example, no internet).
 
 **`state`**, live only and not logged:
@@ -350,7 +406,9 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
 | `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
 
-**`list`**, live only: the whole List after every turn and every list click, `{"type": "list", "items": [{"name", "quantity", "buying_pattern", "status"}]}`.
+**`list`**, live only: the whole List after every turn and every list click, `{"type": "list", "items": [{"name", "quantity", "buying_pattern", "status", "product_name"}]}`.
+
+**`progress`**, live only, while the Cart fills: `{"type": "progress", "text": "Filling cart, 4 of 12"}`. Both screens show it in the state line until the next `state`.
 
 **`snapshot`**, sent once to each UI connection: `{"type": "snapshot", "state", "items", "turns"}` with the last 50 turns from the log.
 
@@ -383,6 +441,8 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
 | `KIKI_UI_PORT` | `8765` | UI port |
+| `KIKI_STORE` | `wegmans` | The Store's Instacart name in its URLs; only its Orders are read and only its Cart is filled (v0.17) |
+| `KIKI_ADDRESS` | `30 River Court` | Only Orders delivered here are read, and the Cart is filled only while Instacart is set to it |
 | `KIKI_UI_HOST` | `127.0.0.1` | Address the UI binds to. `0.0.0.0` opens it to the home network for a Tab5 program that follows `/events` itself (NFR-0.7); no password yet |
 | `KIKI_MIC` | laptop | `tab5`: listen through the Tab5's mic instead of the laptop's (FR-0.29) |
 | `KIKI_MIC_PORT` | `8768` | UDP port the Tab5's mic sends to |
@@ -390,7 +450,7 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_SPEAKER_PORT` | `8769` | TCP port the Tab5's speaker connects to |
 | `KIKI_SCREEN_PORT` | `8767` | TCP port the Tab5's screen connects to (`python -m kiki.screen`) |
 | `KIKI_SCREEN_QUALITY` | `70` | JPEG quality of the frames sent to the Tab5 |
-| `KIKI_CHROME` | `C:\Program Files\Google\Chrome\Application\chrome.exe` | The Chrome that renders the page for the Tab5 |
+| `KIKI_CHROME` | `C:\Program Files\Google\Chrome\Application\chrome.exe` | The Chrome that renders the page for the Tab5, and the owner's Chrome that Kiki opens its Instacart tabs in (v0.17) |
 
 ## Dependencies
 
@@ -409,6 +469,8 @@ Approved. Anything else needs the owner's yes and an ADR.
 `piper-tts` is GPL-3.0. Fine for a personal assistant; if Kiki is ever distributed, switch to `PiperHttpTTSService` or Kokoro.
 
 Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-Sent Events and one HTML file.
+
+v0.17 adds none either: the Kiki for Instacart extension (`browser/instacart`) is plain JavaScript that the owner loads into their own Chrome, and Kiki starts Chrome with `subprocess`.
 
 | Dependency (v0.14) | Why | Since |
 |---|---|---|

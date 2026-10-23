@@ -3,6 +3,7 @@
 import http.client
 import json
 import re
+import threading
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,7 @@ def test_fr_0_13_live_events_for_a_typed_command(server):
             "quantity": 1,
             "buying_pattern": "occasional",
             "status": "needed",
+            "product_name": None,
         }
     ]
     assert snapshot["turns"] == []
@@ -258,3 +260,89 @@ def test_fr_0_17_page_loads_the_speaking_orb_from_kiki_itself(server):
     script = response.read().decode()
     assert "customElements.define('speaking-orb'" in script
     assert "MIT License" in script
+
+
+def post_json(server, path, body):
+    return request(
+        server, "POST", path, json.dumps(body), {"Content-Type": "application/json"}
+    )
+
+
+def test_fr_0_35_the_reset_button_starts_the_list_over_and_shows_in_history(server):
+    events = read_events(request(server, "GET", "/events"))
+    next(events)  # snapshot
+    response = post_json(server, "/reset", {})
+    assert response.status == 200
+    assert json.loads(response.read()) == {
+        "needed": []
+    }  # bread was Occasional: off the List
+    turn = next(e for e in events if e["type"] == "turn")
+    assert turn["source"] == "button" and turn["tool_calls"][0]["name"] == "reset_list"
+    assert (
+        turn["tool_calls"][0]["args"]["before"][0]["name"] == "bread"
+    )  # the log keeps it
+
+
+def test_fr_0_34_an_edit_forgets_the_product(server, tmp_path):
+    conn = connect(str(tmp_path / "ui.db"))
+    tools.set_product_for_item(
+        conn, "bread", 82101319, "Wegmans Soft 100% Whole Wheat Bread"
+    )
+    response = post_json(server, "/item", {"name": "bread", "forget_product": True})
+    assert response.status == 200
+    assert tools.items_without_product(conn) == ["bread"]
+
+
+def test_nfr_0_9_the_extension_gets_its_job_and_answers_it(server, monkeypatch):
+    from kiki import instacart
+
+    port = server.server_address[1]
+
+    def extension(url):
+        """What browser/instacart/worker.js does, over HTTP."""
+        job_id, kiki_port = url.rsplit("#kiki-", 1)[1].split("-")
+        assert kiki_port == str(port)
+        job = json.loads(request(server, "GET", "/instacart/job").read())
+        assert (
+            job["id"] == job_id
+            and job["kind"] == "search"
+            and job["store"] == instacart.STORE
+        )
+        post_json(
+            server, "/instacart/result", {"id": "someone-else", "ok": True, "data": {}}
+        )
+        post_json(
+            server,
+            "/instacart/result",
+            {"id": job_id, "ok": True, "data": {"results": [1]}},
+        )
+
+    monkeypatch.setattr(instacart, "PORT", port)
+    monkeypatch.setattr(
+        instacart,
+        "open_tab",
+        lambda url: threading.Thread(target=extension, args=(url,)).start(),
+    )
+    assert instacart.run_job("search", query="walnuts") == {"results": [1]}
+    assert request(server, "GET", "/instacart/job").status == 204  # nothing waiting now
+
+
+def test_nfr_0_9_a_failed_job_raises_its_reason(server, monkeypatch):
+    from kiki import instacart
+
+    def extension(url):
+        job_id = url.rsplit("#kiki-", 1)[1].split("-")[0]
+        post_json(
+            server,
+            "/instacart/result",
+            {"id": job_id, "ok": False, "error": "signed_out"},
+        )
+
+    monkeypatch.setattr(
+        instacart,
+        "open_tab",
+        lambda url: threading.Thread(target=extension, args=(url,)).start(),
+    )
+    with pytest.raises(instacart.InstacartError) as e:
+        instacart.run_job("read_orders", known=[])
+    assert e.value.code == "signed_out"

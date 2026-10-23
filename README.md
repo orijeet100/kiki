@@ -46,9 +46,20 @@ Say "hey jarvis" to the Tab5, wait for the chime, say a command. Drag the bar al
 
 Better, since v0.15: let the Tab5 draw the UI itself, smoother and without Chrome: flash `device/kiki` with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9`, and run Kiki with `$env:KIKI_UI_HOST="0.0.0.0"` as well; `kiki.screen` isn't needed. Details, ports and what was learned: [ARCHITECTURE.md](ARCHITECTURE.md#tab5-v014).
 
+## Order the groceries
+
+Since v0.17 Kiki fills your Instacart cart at Wegmans; you check out in the Instacart app. Once, in your own Chrome (signed in to Instacart): open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and pick `browser/instacart`. Set `KIKI_ADDRESS` in `.env` if your delivery address isn't 30 River Court. Then:
+
+- "Analyze my order": Kiki reads your past Wegmans orders and learns which product each item is.
+- "Order the groceries": every Needed item goes into the cart at its quantity. Items it had to guess are listed in History.
+- "Use Diamond walnuts for walnuts", "forget the walnut product": change an item's product.
+- **Reset** on the list (tap twice) when the groceries have come: Frequent items come back, Occasional ones go.
+
+Kiki opens its own Instacart tab in your Chrome, works there and closes it; it never touches your other tabs and never checks out ([ADR 0034](docs/adr/0034-reach-instacart-through-a-kiki-extension-in-the-owners-chrome.md)).
+
 ## Why
 
-We order groceries from home. The list is the first useful thing and the base for later rungs (cart building, ordering). It also exercises every hard part of a voice agent (parsing, persistent state, short replies, latency) with almost no external risk.
+We order groceries from home. The list is the first useful thing and the base for the next rungs: filling the cart (v0.17), then ordering. It also exercises every hard part of a voice agent (parsing, persistent state, short replies, latency) with almost no external risk.
 
 ## Who and where
 

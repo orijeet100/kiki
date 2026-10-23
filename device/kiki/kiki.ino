@@ -37,6 +37,7 @@ struct Item {
   bool needed;
   bool changed;   // new or different since the last list: gets the blue ring for 1.5 s
   bool frequent;  // Frequent stays on the List when Not needed; Occasional leaves it
+  String product;  // the Product the Cart gets for it (v0.17), empty when it has none yet
 };
 
 struct Chip {
@@ -61,7 +62,7 @@ struct KeyboardState {
 };
 
 // Requests the screen hands to networkTask (events.ino), and its answers.
-enum class PostKind { Needed, Quantity, Pattern, Rename, Command };
+enum class PostKind { Needed, Quantity, Pattern, Rename, Forget, Reset, Command };
 
 struct Post {  // networkTask deletes the json; the strings travel on to the PostResult
   PostKind kind;
@@ -133,6 +134,8 @@ void handleSerialTestCommands() {
     String name = command.substring(4);
     name.trim();
     if (lv_obj_t *keys = keyboardShown()) pressKey(keys, name);
+  } else if (command.startsWith("tapreset")) {  // "tapreset": a finger on the List's Reset (twice to reset)
+    tapResetButton();
   } else if (command.startsWith("tapsheet ")) {  // "tapsheet plus": a finger on the item sheet's control
     String control = command.substring(9);
     control.trim();

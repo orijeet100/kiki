@@ -9,13 +9,15 @@ import ipaddress
 import json
 import os
 import queue
+import secrets
 import sqlite3
 import sys
 import threading
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from kiki import events, tools
+from kiki import events, instacart, tools
 from kiki.agent import run_turn, turn_lock, warm_up
 from kiki.db import connect
 
@@ -27,6 +29,11 @@ PAGE = (Path(__file__).parent / "ui.html").read_bytes()
 ORB = (Path(__file__).parent / "speaking-orb.js").read_bytes()  # ADR 0024
 MAX_COMMAND_CHARS = 200
 KEEPALIVE_SECS = 15
+# The extension's answers; GET /instacart/job is in do_GET (ADR 0034).
+INSTACART_POSTS = {
+    "/instacart/result": instacart.finish,
+    "/instacart/progress": instacart.progress,
+}
 
 
 def send_command(text: str, conn: sqlite3.Connection, model=None) -> None:
@@ -40,7 +47,7 @@ def send_command(text: str, conn: sqlite3.Connection, model=None) -> None:
 def item_change(body: dict) -> tuple[str, bool | int | str] | None:
     """The one change a POST /item asks for: needed, quantity, buying_pattern or new_name; None
     if malformed."""
-    keys = ("needed", "quantity", "buying_pattern", "new_name")
+    keys = ("needed", "quantity", "buying_pattern", "new_name", "forget_product")
     changes = [key for key in keys if key in body]
     if len(changes) != 1:
         return None
@@ -50,6 +57,8 @@ def item_change(body: dict) -> tuple[str, bool | int | str] | None:
     if key == "quantity" and type(value) is int and 1 <= value <= 99:
         return key, value
     if key == "buying_pattern" and value in ("frequent", "occasional"):
+        return key, value
+    if key == "forget_product" and value is True:
         return key, value
     if (
         key == "new_name"
@@ -76,6 +85,8 @@ def edit_item(name: str, change: tuple, conn: sqlite3.Connection) -> tuple[int, 
             result = tools.set_quantity(conn, name, value)
         elif key == "buying_pattern":
             result = tools.set_buying_pattern(conn, name, value)
+        elif key == "forget_product":
+            result = tools.forget_product_for_item(conn, name)
         else:
             result = tools.rename_item(conn, name, value)
         items = tools.read_list(conn)["items"]
@@ -85,6 +96,32 @@ def edit_item(name: str, change: tuple, conn: sqlite3.Connection) -> tuple[int, 
     if key != "needed" and "not_found" in result:  # remove_items always lists not_found
         return 404, result
     return 200, result
+
+
+def reset(conn: sqlite3.Connection) -> dict:
+    """The Reset button (FR-0.35): start the List over, logged as a turn so History shows
+    what it did and the log keeps the List as it was."""
+    with turn_lock:
+        before = tools.read_list(conn)["items"]
+        result = tools.reset_list(conn)
+        items = tools.read_list(conn)["items"]
+    now = datetime.now(UTC)
+    turn = {
+        "type": "turn",
+        "id": f"t_{now:%Y%m%dT%H%M%S}_{secrets.token_hex(2)}",
+        "ts": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "source": "button",
+        "heard": "Reset",
+        "tool_calls": [
+            {"name": "reset_list", "args": {"before": before}, "result": result}
+        ],
+        "said": "",
+        "model": None,
+        "latency_ms": {"stt": None, "llm": 0, "tts": None, "total": 0},
+        "error": None,
+    }
+    events.record_turn(turn, items)
+    return result
 
 
 def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHandler]:
@@ -113,13 +150,20 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 self._send(200, "text/javascript; charset=utf-8", ORB)
             elif self.path == "/events":
                 self._stream()
+            elif (
+                self.path == "/instacart/job"
+            ):  # the extension asks for its job (ADR 0034)
+                job = instacart.current_job()
+                if job is None:
+                    return self._send(204, "application/json", b"")
+                self._send(200, "application/json", json.dumps(job).encode())
             else:
                 self.send_error(404)
 
         def do_POST(self):
             if not self._host_is_allowed():
                 return self.send_error(403)
-            if self.path not in ("/command", "/item"):
+            if self.path not in ("/command", "/item", "/reset", *INSTACART_POSTS):
                 return self.send_error(404)
             # A JSON content type can't be sent cross-site without a CORS preflight we never
             # answer, so other web pages can't post commands.
@@ -128,6 +172,13 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 body = json.loads(self.rfile.read(length))
+                if self.path in INSTACART_POSTS:
+                    INSTACART_POSTS[self.path](body)
+                    return self._send(200, "application/json", b"{}")
+                if self.path == "/reset":
+                    return self._send(
+                        200, "application/json", json.dumps(reset(conn)).encode()
+                    )
                 text = body["text" if self.path == "/command" else "name"].strip()
             except (ValueError, KeyError, TypeError, AttributeError):
                 return self.send_error(400)

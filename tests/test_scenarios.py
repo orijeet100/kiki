@@ -127,7 +127,7 @@ def test_scenario_10_fr_0_26_clear(conn):
     turn = agent.run_turn("Clear the list", conn)
     assert state(conn) == {}
     assert "five" in turn["said"].lower()
-    clear = next(c for c in turn["tool_calls"] if c["name"] == "clear_list")
+    clear = next(c for c in turn["tool_calls"] if c["name"] == "clear_all_items")
     assert len(clear["result"]["removed"]) == 5
 
 
@@ -264,3 +264,38 @@ def test_nfr_0_3_turns_on_new_threads_do_not_stall(conn):
         thread.start()
         thread.join()
     assert max(took) < 5, took
+
+
+# v0.17: the matching request on the owner's real Product names (Wegmans, Oct 2026).
+PLACED = [
+    {"id": 16961005, "name": "Wegmans Grade AA Large Eggs, 18 Count"},
+    {"id": 17499428, "name": "Wegmans Onions, Red"},
+    {"id": 24872587, "name": "Wegmans Celery"},
+    {"id": 17327160, "name": "Blueberries, FAMILY PACK"},
+    {"id": 16850041, "name": "Land O Lakes Butter, Unsalted"},
+    {"id": 45195038, "name": "Wegmans Boneless, Skinless Chicken Thighs, FAMILY PACK"},
+    {
+        "id": 2671090,
+        "name": "Oikos Triple Zero Mixed Berry High Protein Nonfat Greek Yogurt",
+    },
+    {"id": 26018020, "name": "Barebells Creamy Crisp Protein Bar"},
+    {"id": 20532521, "name": "Wegmans Heavy Cream, Pint"},
+    {"id": 21060181, "name": "Wegmans Plum (Roma) Tomatoes"},
+]
+
+
+def test_fr_0_36_scenario_matches_items_to_the_owners_products():
+    from kiki import ordering
+
+    items = ["Eggs", "Onion", "Celery", "Blueberry", "Butter", "Chicken", "Protein Yogurt",
+             "Tomatoes", "Walnut", "Apple"]  # fmt: skip
+    matches = ordering.match_products(items, PLACED)
+    assert matches["Eggs"] == [16961005]
+    assert matches["Onion"] == [17499428]
+    assert matches["Celery"] == [24872587]
+    assert matches["Blueberry"] == [17327160]
+    assert matches["Butter"] == [16850041]
+    assert matches["Chicken"] == [45195038]
+    assert matches["Protein Yogurt"] == [2671090]  # not the protein bar
+    assert matches["Tomatoes"] == [21060181]
+    assert not matches.get("Walnut") and not matches.get("Apple")

@@ -24,7 +24,8 @@ static const char *const SUGGESTIONS[] = {"add bread and two milks", "make it th
 
 lv_obj_t *connectionDot, *connectionLabel, *historyCountLabel;
 lv_obj_t *orbArea, *captionLabel, *stateLabel, *lastRunRow;
-lv_obj_t *listCountLabel, *listRows;
+lv_obj_t *listCountLabel, *listRows, *resetButton;
+lv_timer_t *resetArmed = nullptr;
 lv_obj_t *composer, *commandInput, *formErrorLabel, *keyboard;
 lv_obj_t *volumePercentLabel;
 lv_obj_t *historyBackdrop = nullptr, *historySheet = nullptr, *historyRunsList = nullptr;
@@ -221,6 +222,38 @@ int orbRowsUnderCaption() {
   lv_obj_get_coords(captionLabel, &caption);
   lv_obj_get_coords(orbArea, &orb);
   return max(0, (int)(orb.y2 - caption.y1 + 1));
+}
+
+// While Kiki fills the Cart, the state line says how far it is: "Filling cart, 4 of 12".
+void showProgress(const String &text) {
+  if (text.length()) lv_label_set_text(stateLabel, text.c_str());
+}
+
+// Reset takes two taps, so a stray one on the fridge can't start the List over (FR-0.35).
+void disarmReset(lv_timer_t *) {
+  resetArmed = nullptr;  // a one-shot timer deletes itself
+  lv_label_set_text(lv_obj_get_child(resetButton, 0), "Reset");
+}
+
+void tapReset() {
+  if (!resetArmed) {
+    lv_label_set_text(lv_obj_get_child(resetButton, 0), "Tap again to reset");
+    resetArmed = lv_timer_create(disarmReset, 3000, nullptr);
+    lv_timer_set_repeat_count(resetArmed, 1);
+    return;
+  }
+  lv_timer_delete(resetArmed);
+  disarmReset(nullptr);
+  measureFromTap("reset");
+  sendReset();
+}
+
+// "tapreset" over serial.
+void tapResetButton() {
+  lv_area_t area;
+  lv_obj_get_coords(resetButton, &area);
+  Serial.println("[test] tap reset");
+  pressScreenFor((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, 120);
 }
 
 void showKikiState(const String &state, bool showDoneFirst) {
@@ -436,9 +469,15 @@ void buildList(lv_obj_t *screen) {
 
   lv_obj_t *head = makeBox(card);
   lv_obj_set_width(head, LV_PCT(100));
-  stackChildren(head, LV_FLEX_FLOW_ROW, 12, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END);
-  makeText(head, &inter_32_bold, INK, "Grocery list");
-  listCountLabel = makeText(head, &inter_20, INK_MUTED, "");
+  stackChildren(head, LV_FLEX_FLOW_ROW, 12, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER);
+  lv_obj_t *title = makeBox(head);
+  stackChildren(title, LV_FLEX_FLOW_ROW, 12, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END);
+  makeText(title, &inter_32_bold, INK, "Grocery list");
+  listCountLabel = makeText(title, &inter_20, INK_MUTED, "");
+  resetButton = makePillButton(head, "Reset", false);
+  fill(resetButton, SURFACE_2);
+  fill(resetButton, HAIRLINE, LV_STATE_PRESSED);
+  onClick(resetButton, [](lv_event_t *) { tapReset(); });
 
   listRows = makeBox(card);
   lv_obj_set_width(listRows, LV_PCT(100));
