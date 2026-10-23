@@ -158,8 +158,10 @@ void handleEvent(const char *json) {
       showCaption(runs.front().said);
     }
   }
-  Serial.printf("[events] %s  state=%s items=%d runs=%d\n", type.c_str(), kikiState.c_str(), (int)items.size(),
-                (int)runs.size());
+  // Internal RAM is what the Wi-Fi link (SDIO to the C6) runs out of first, so every event logs it.
+  Serial.printf("[events] %s  state=%s items=%d runs=%d  internal free %u, largest %u\n", type.c_str(), kikiState.c_str(),
+                (int)items.size(), (int)runs.size(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
 
 void setKikiState(const String &state) {

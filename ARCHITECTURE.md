@@ -316,6 +316,10 @@ What the page gives, per line of an Order: `item` is what was placed, `currentIt
 
 **The matching request runs on its own thread.** It's made from inside `update_list`, during the command's own agent run, where Pydantic AI refuses a nested `run_sync` (it could deadlock); a fresh thread is outside that run. Found end to end: the unit tests used a fake matcher. Any other error in an ordering step becomes "Something went wrong with Instacart, please try again." rather than a turn that never ends.
 
+### Tab5 memory
+
+The Tab5's Wi-Fi is an ESP32-C6 on SDIO, and its receive buffers come from the P4's internal RAM. `setup()` calls `heap_caps_malloc_extmem_enable(0)` first, so every ordinary allocation (LVGL's objects, styles and text, `String`s, the History runs) goes to PSRAM; drivers that need internal or DMA memory ask for it by capability. Before (v0.18), with 22 List rows and History's ordering rows built, internal RAM fell to 24-31 KB and the SDIO driver asserted (`sdio_rx_get_buffer sdio_drv.c:953`) and rebooted, usually right after "hey jarvis" when the speaker took its share. After: 110-150 KB free, History open included, the orb unchanged at 40 fps. Every `[events]` line in the serial log prints the free internal RAM and its largest block. Scrolling History stalls the loop (about 25 passes in 5 s, steps up to 250 ms) with or without this; it's a full redraw of the sheet, not memory.
+
 ## Matching names
 
 `normalize()` in `tools.py` maps singular and plural to one key with suffix rules: lowercase, collapse spaces, drop a trailing `s` (not `ss`, `us`, `is`), then `ie` to `y` and drop the `e` of `oe`, `che`, `she`, `xe`, `sse`. The key isn't always a real word ("cookie" becomes "cooky"); it only has to match both forms. Irregular plurals ("loaves") aren't handled.
