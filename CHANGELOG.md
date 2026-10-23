@@ -8,7 +8,10 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - `python -m kiki.stt_bench [model ...]`: Whisper models side by side on Piper-spoken commands, time per command and word accuracy. `distil-small.en` measured 1.53 s per command against 0.56 s for `base.en` (on battery), and no more accurate.
 - Kiki prints its speech-to-text model at start-up (`KIKI_WHISPER_MODEL`).
 
+- `device/kiki/serial.ps1` sends test commands to the Tab5 over USB serial and prints its log; the Tab5 logs its screen loop's slowest step every 5 s, and `tapitem n` taps the List's row n.
+
 ### Changed
+- The Tab5 never waits on the network while drawing: the event stream and requests run in their own task (v0.16). A List tap shows the flipped row in 9–12 ms instead of 94–126 ms, and no longer freezes the screen for ~100 ms; a refused flip goes back with the reason.
 - Wake threshold back to 0.5 (`KIKI_WAKE_THRESHOLD`). On the Tab5's mic, real "hey jarvis" scored 0.73 to 0.90 and talk and TV up to 0.46; at 0.4 Kiki woke by itself about six times in an evening.
 
 ## [v0.15] - 2026-10-22

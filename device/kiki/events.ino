@@ -1,5 +1,12 @@
 // Kiki's side of the conversation: the live events that drive the screen, and the two requests
 // the screen sends back. Same endpoints and same meaning as the web UI (ui.html).
+//
+// Every wait on the network happens in networkTask, never in loop(): a POST inside a tap handler
+// froze the whole screen for ~100 ms a tap. The task hands event lines and POST results to the
+// loop through queues, and the loop alone touches LVGL and the screen's state.
+
+QueueHandle_t eventLines, posts, postResults;  // of String *, Post and PostResult
+volatile Link networkLink = Link::Connecting;    // written by networkTask, shown by the loop
 
 WiFiClient eventStream;
 uint32_t nextEventStreamAttempt = 0;
@@ -8,31 +15,84 @@ String kikiUrl(const char *path) { return String("http://") + KIKI_HOST + ":" + 
 
 void keepEventStreamOpen() {
   if (eventStream.connected()) return;
-  if (eventLink == Link::Live) {
+  if (networkLink == Link::Live) {
     Serial.println("[events] stream closed, retrying");
-    eventLink = Link::Reconnecting;
-    showConnection(eventLink);
+    networkLink = Link::Reconnecting;
   }
   if (millis() < nextEventStreamAttempt) return;
   nextEventStreamAttempt = millis() + 3000;
   Serial.printf("[events] GET %s\n", kikiUrl("/events").c_str());
   if (!eventStream.connect(KIKI_HOST, KIKI_PORT, 500)) {
-    eventLink = Link::Reconnecting;
-    showConnection(eventLink);
+    networkLink = Link::Reconnecting;
     return;
   }
   eventStream.printf("GET /events HTTP/1.1\r\nHost: %s:%d\r\n\r\n", KIKI_HOST, KIKI_PORT);
   eventStream.setTimeout(2000);
   Serial.printf("[events] %s\n", eventStream.readStringUntil('\n').c_str());  // status line
   while (eventStream.connected() && eventStream.readStringUntil('\n') != "\r") {}  // headers
-  eventLink = Link::Live;
-  showConnection(eventLink);
+  networkLink = Link::Live;
 }
 
 void readEvents() {
   while (eventStream.available()) {  // one event per "data: {...}" line
     String line = eventStream.readStringUntil('\n');
-    if (line.startsWith("data: ")) handleEvent(line.c_str() + 6);
+    if (line.startsWith("data: ")) {
+      String *json = new String(line.substring(6));
+      xQueueSend(eventLines, &json, portMAX_DELAY);  // the loop takes every line within a frame
+    }
+  }
+}
+
+void networkTask(void *) {
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) {
+      keepEventStreamOpen();
+      readEvents();
+    }
+    Post post;
+    if (xQueueReceive(posts, &post, pdMS_TO_TICKS(10))) {
+      int status = postJson(post.kind == PostKind::Flip ? "/item" : "/command", *post.json);
+      PostResult result{post.kind, status, post.subject};
+      xQueueSend(postResults, &result, portMAX_DELAY);
+      delete post.json;
+    }
+  }
+}
+
+void startNetwork() {
+  eventLines = xQueueCreate(16, sizeof(String *));
+  posts = xQueueCreate(8, sizeof(Post));
+  postResults = xQueueCreate(8, sizeof(PostResult));
+  xTaskCreate(networkTask, "network", 8192, nullptr, 2, nullptr);
+}
+
+void sendPost(PostKind kind, JsonDocument &body, const String &subject) {
+  String *json = new String();
+  serializeJson(body, *json);
+  Post post{kind, json, new String(subject)};
+  if (!xQueueSend(posts, &post, 0)) {  // eight requests already waiting: Kiki is unreachable
+    PostResult result{kind, -1, post.subject};
+    xQueueSend(postResults, &result, 0);
+    delete json;
+  }
+}
+
+// Called from loop(): whatever networkTask brought in since the last frame.
+void handleNetworkNews() {
+  static Link shownLink = Link::Connecting;
+  if (networkLink != shownLink) {
+    shownLink = eventLink = networkLink;
+    showConnection(eventLink);
+  }
+  String *json;
+  while (xQueueReceive(eventLines, &json, 0)) {
+    handleEvent(json->c_str());
+    delete json;
+  }
+  PostResult result;
+  while (xQueueReceive(postResults, &result, 0)) {
+    finishPost(result);
+    delete result.subject;
   }
 }
 
@@ -182,35 +242,53 @@ void addRun(JsonObjectConst turn) {
 
 // ---------- requests back to Kiki ----------
 
-int postJson(const char *path, JsonDocument &body) {
-  String json;
-  serializeJson(body, json);
+// Runs on networkTask only.
+int postJson(const char *path, const String &json) {
+  uint32_t start = millis();
   HTTPClient http;
   http.setTimeout(3000);
   http.begin(kikiUrl(path));
   http.addHeader("Content-Type", "application/json");
   int status = http.POST(json);
   http.end();
-  Serial.printf("[http] POST %s %s -> %d\n", path, json.c_str(), status);
+  Serial.printf("[http] POST %s %s -> %d in %lu ms\n", path, json.c_str(), status, millis() - start);
   return status;
 }
 
 String failureReason(int status) { return status < 0 ? String("Kiki is offline") : "HTTP " + String(status); }
 
-// The same request as clicking a row in the browser (FR-0.27); the new List comes back as an event.
+// The same request as clicking a row in the browser (FR-0.27), for an item the screen has already
+// flipped; Kiki's new List comes back as an event.
 void setNeeded(const Item &item) {
   JsonDocument body;
   body["name"] = item.name;
-  body["needed"] = !item.needed;
-  int status = postJson("/item", body);
-  showFormError(status == 200 ? "" : "Couldn't change " + item.name + " (" + failureReason(status) + ").");
+  body["needed"] = item.needed;
+  sendPost(PostKind::Flip, body, item.name);
 }
 
-// Returns whether Kiki took it; the answer arrives as a turn event.
-bool sendCommand(const String &text) {
+// The text box is already cleared; the answer arrives as a turn event.
+void sendCommand(const String &text) {
   JsonDocument body;
   body["text"] = text;
-  int status = postJson("/command", body);
-  showFormError(status == 202 ? "" : "Couldn't send that (" + failureReason(status) + ").");
-  return status == 202;
+  sendPost(PostKind::Command, body, text);
+}
+
+// A refused flip goes back, and a refused command goes back into the text box, with the reason.
+void finishPost(const PostResult &result) {
+  const String &subject = *result.subject;
+  if (result.kind == PostKind::Flip) {
+    if (result.status == 200) {
+      showFormError("");
+      return;
+    }
+    for (Item &item : items)
+      if (item.name == subject) item.needed = !item.needed;
+    showList();
+    showFormError("Couldn't change " + subject + " (" + failureReason(result.status) + ").");
+  } else if (result.status == 202) {
+    showFormError("");
+  } else {
+    putBackCommand(subject);
+    showFormError("Couldn't send that (" + failureReason(result.status) + ").");
+  }
 }

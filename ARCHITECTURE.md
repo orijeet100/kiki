@@ -214,8 +214,9 @@ The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so 
 
 | File | What |
 |---|---|
-| `kiki.ino` | setup, the main loop, the shared state and the serial test commands (`tap`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
-| `events.ino` | `GET /events` (snapshot, state, list, turn) into the screen's state; `POST /item` and `POST /command` |
+| `kiki.ino` | setup, the main loop and its stall log, the shared state and the serial test commands (`tap`, `tapitem`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
+| `events.ino` | `networkTask`: `GET /events` and the `POST /item` and `POST /command` requests; the loop turns its events (snapshot, state, list, turn) into the screen's state |
+| `serial.ps1` | sends test commands over USB serial and prints the log: `serial.ps1 "tapitem 0" "wait 2" ...` |
 | `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List, text box and keyboard, History sheet, volume bar |
 | `orb.ino` | the Speaking Orb's particle field and shapes, ported; the speaking pulse from the reply's words |
 | `audio.ino` | mic and speaker, as in `device/stream` |
@@ -230,6 +231,17 @@ The orb draws 3,000 particles at half resolution in its own task on core 0, into
 | Tap → item flipped | 119 ms | 10 ms |
 | Tap → History open | didn't open | 130–137 ms |
 | Mic packets per 10 s | 502 | 502 |
+
+**Nothing on the screen waits on the network** (v0.16): `loop()` draws (touch, orb, LVGL) and never touches Wi-Fi. `networkTask` keeps the event stream open, reads its lines and sends the POSTs, and talks to the loop through three FreeRTOS queues: event lines in, requests out, results back; only the loop touches LVGL and the screen's state. A List tap flips its row and the count at once and then queues the request; if Kiki refuses or can't be reached, the row flips back with the reason, and a command that wasn't taken goes back into the text box. Every 5 s the loop logs its slowest step (`[loop] slowest step 4 ms (orb), 2100 loops in 5 s`). Measured on the Tab5 (2026-10-22, `serial.ps1 "tapitem 0"`):
+
+| | Before | After |
+|---|---|---|
+| Tap → flipped row on the panel | 94–126 ms (after Kiki answered) | 9–12 ms |
+| Tap → first pixels | 90–112 ms | 14–28 ms |
+| Slowest loop step around a tap | 102–106 ms (the POST, inside LVGL's tap handler) | 33–37 ms (rebuilding the List when Kiki's new List arrives) |
+| Slowest loop step while Kiki is offline | each retry could block 0.5 s (connect timeout) | 4–6 ms |
+
+The List is still rebuilt from scratch on every `list` event (33–37 ms) and the snapshot on connecting takes 54 ms; updating rows in place is the next step.
 
 Lessons: 168 KB of static buffers in internal RAM starved Wi-Fi and the speaker's DMA and rebooted the Tab5 when Kiki spoke (the particles now live in PSRAM); a part chunk left in the speaker FIFO kept the mic paused for good (both programs now drop it after 200 ms with no new audio); a screenshot over USB freezes the screen for seconds, so none are taken during live replies. Build and flash with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9` (it adds the sketch folder to the include path so LVGL finds `lv_conf.h`).
 

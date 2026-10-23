@@ -98,6 +98,8 @@ void onClick(lv_obj_t *obj, lv_event_cb_t handler, void *data = nullptr) {
 int16_t pressedFromX, pressedFromY, pressedToX, pressedToY;
 uint32_t pressedSince = 0, pressedFor = 0;
 uint32_t tapReleasedAt = 0;  // measuring: a test tap's release, until the first pixels it causes reach the panel
+uint32_t flipTappedAt = 0;   // measuring: a List tap, until its flipped row reaches the panel
+bool flipRowUpdated = false;
 
 // A press from (x0, y0) moving to (x1, y1) over ms, as a finger would: a tap when they're the same.
 void pressScreenAlong(int x0, int y0, int x1, int y1, uint32_t ms) {
@@ -184,6 +186,10 @@ void flushToPanel(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
   if (tapReleasedAt && millis() >= tapReleasedAt) {
     Serial.printf("[measure] tap to pixels on the panel: %lu ms after release\n", millis() - tapReleasedAt);
     tapReleasedAt = 0;
+  }
+  if (flipRowUpdated) {
+    Serial.printf("[measure] tap to flipped row on the panel: %lu ms\n", millis() - flipTappedAt);
+    flipRowUpdated = false;
   }
   blitToPanel((const uint16_t *)pixels, lv_area_get_width(area), lv_area_get_height(area), area->x1, area->y1, 1);
   lv_display_flush_ready(display);
@@ -294,9 +300,39 @@ void showLastRun() {
 
 // ---------- the List ----------
 
+
+void tapListRow(int index) {
+  if (index < 0 || index >= (int)listRowObjects.size()) return;
+  lv_area_t area;
+  lv_obj_get_coords(listRowObjects[index], &area);
+  Serial.printf("[test] tap item %d\n", index);
+  pressScreenFor((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2, 120);
+}
+
+String quantityText(const Item &item) {
+  return !item.needed ? "Not needed" : item.quantity > 1 ? "× " + String(item.quantity) : "";
+}
+
+void showListCount() {
+  int needed = 0;
+  for (const Item &item : items) needed += item.needed;
+  lv_label_set_text(listCountLabel, items.empty() ? "" : (String(needed) + (needed == 1 ? " item" : " items")).c_str());
+}
+
+// The row flips as the finger lifts, then Kiki is told (setNeeded); if it refuses, finishPost
+// flips it back. Kiki's new List, a moment later, puts the row in its place.
 void flipItem(lv_event_t *event) {
   size_t index = (intptr_t)lv_event_get_user_data(event);
-  if (index < items.size()) setNeeded(items[index]);
+  if (index >= items.size()) return;
+  flipTappedAt = millis();
+  Item &item = items[index];
+  item.needed = !item.needed;
+  lv_obj_t *row = lv_event_get_current_target_obj(event);
+  lv_obj_set_style_opa(row, item.needed ? LV_OPA_COVER : 115, 0);
+  lv_label_set_text(lv_obj_get_child(row, 1), quantityText(item).c_str());
+  showListCount();
+  flipRowUpdated = true;
+  setNeeded(item);
 }
 
 void styleRowAtRest(lv_obj_t *row) {
@@ -317,9 +353,7 @@ void showList() {
   int32_t scrolledTo = lv_obj_get_scroll_y(listRows);
   lv_obj_clean(listRows);
   listRowObjects.clear();
-  int needed = 0;
-  for (const Item &item : items) needed += item.needed;
-  lv_label_set_text(listCountLabel, items.empty() ? "" : (String(needed) + (needed == 1 ? " item" : " items")).c_str());
+  showListCount();
 
   if (items.empty()) {
     lv_obj_t *empty = makeBox(listRows);
@@ -354,8 +388,7 @@ void showList() {
     lv_obj_t *nameLabel = makeText(row, &inter_24, INK, name);
     lv_label_set_long_mode(nameLabel, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(nameLabel, 1);
-    String quantity = !item.needed ? "Not needed" : item.quantity > 1 ? "× " + String(item.quantity) : "";
-    makeText(row, &inter_20, INK_MUTED, quantity);
+    makeText(row, &inter_20, INK_MUTED, quantityText(item));
     onClick(row, flipItem, (void *)(intptr_t)i);
     listRowObjects.push_back(row);
   }
@@ -429,10 +462,14 @@ void submitCommand() {
   String text = lv_textarea_get_text(commandInput);
   text.trim();
   if (text.isEmpty()) return;
-  if (sendCommand(text)) {
-    lv_textarea_set_text(commandInput, "");
-    closeKeyboard();
-  }
+  sendCommand(text);  // if Kiki can't take it, finishPost puts the text back with the reason
+  lv_textarea_set_text(commandInput, "");
+  closeKeyboard();
+}
+
+// A command Kiki couldn't take goes back into the text box, unless something new is being typed.
+void putBackCommand(const String &text) {
+  if (String(lv_textarea_get_text(commandInput)).isEmpty()) lv_textarea_set_text(commandInput, text.c_str());
 }
 
 void showFormError(const String &text) {

@@ -50,6 +50,20 @@ struct Run {
 
 enum class Link { Connecting, Live, Reconnecting };  // the event stream, as the top bar shows it
 
+// Requests the screen hands to networkTask (events.ino), and its answers.
+enum class PostKind { Flip, Command };
+
+struct Post {  // networkTask deletes the strings
+  PostKind kind;
+  String *json, *subject;  // subject: the item's name, or the command's text
+};
+
+struct PostResult {  // the loop deletes the string
+  PostKind kind;
+  int status;
+  String *subject;
+};
+
 // The orb's types (orb.ino). Declared here because Arduino puts its generated prototypes
 // before the first function, and the orb's functions take these.
 enum OrbShape { SHAPE_LISTENING, SHAPE_THINKING, SHAPE_SEARCHING, SHAPE_SPEAKING, SHAPE_DONE, SHAPE_COUNT };
@@ -102,6 +116,8 @@ void handleSerialTestCommands() {
   if (sscanf(command.c_str(), "drag %d %d %d", &x, &y, &dy) == 3) {  // "drag x y dy": a vertical swipe
     Serial.printf("[test] drag %d %d by %d\n", x, y, dy);
     pressScreenAlong(x, y, x, y + dy, 400);
+  } else if (sscanf(command.c_str(), "tapitem %d", &x) == 1) {  // "tapitem n": a finger on the List's row n
+    tapListRow(x);
   } else if (sscanf(command.c_str(), "tap %d %d", &x, &y) == 2) {
     Serial.printf("[test] tap %d %d\n", x, y);
     pressScreenFor(x, y, 250);
@@ -137,20 +153,47 @@ void setup() {
 
   startScreen();
   startAudio();
+  startNetwork();
 
   Serial.printf("[wifi] connecting to %s\n", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setSleep(false);  // power saving dropped a quarter of the mic packets, with long gaps
 }
 
+// ---------- measuring: the loop's slowest step, every 5 s ----------
+// Everything the screen does happens in loop(), so any step that waits stalls the whole screen;
+// a frame is 16 ms.
+uint32_t stepStartMs = 0, slowestStepMs = 0, loopsCounted = 0, stallReportMs = 0;
+const char *slowestStep = "";
+
+void endStep(const char *step) {
+  uint32_t now = millis();
+  if (now - stepStartMs > slowestStepMs) {
+    slowestStepMs = now - stepStartMs;
+    slowestStep = step;
+  }
+  stepStartMs = now;
+}
+
+void reportStalls() {
+  loopsCounted++;
+  if (millis() - stallReportMs < 5000) return;
+  Serial.printf("[loop] slowest step %lu ms (%s), %lu loops in 5 s\n", slowestStepMs, slowestStep, loopsCounted);
+  stallReportMs = millis();
+  slowestStepMs = loopsCounted = 0;
+}
+
 void loop() {
+  stepStartMs = millis();
   M5.update();
   handleSerialTestCommands();
-  if (WiFi.status() == WL_CONNECTED) {
-    keepEventStreamOpen();
-    readEvents();
-  }
+  endStep("touch");
+  handleNetworkNews();  // the network itself is networkTask's (events.ino)
+  endStep("events");
   showNewestOrbFrame();
+  endStep("orb");
   lv_timer_handler();
+  endStep("lvgl");
+  reportStalls();
   delay(2);
 }
