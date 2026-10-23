@@ -403,3 +403,30 @@ def test_fr_0_40_an_instacart_failure_is_said_plainly(conn, monkeypatch, code, s
     assert turn["said"] == said
     assert turn["tool_calls"][-1]["result"] == {"failed": code}
     assert tools.known_order_ids(conn) == []
+
+
+def test_fr_0_36_the_matching_request_runs_inside_a_turn(conn, monkeypatch):
+    """The real match_products, inside a command's run (found end to end: a nested run_sync)."""
+    monkeypatch.setenv(
+        "KIKI_MODEL", "test"
+    )  # Pydantic AI's offline TestModel answers it
+    monkeypatch.setattr(instacart, "run_job", Extension(orders=[OCT_21]))
+    tools.add_items(conn, [{"name": "eggs"}])
+    turn = agent.run_turn(
+        "analyze my order", conn, says(learn_product_preferences=True, reply="Sure.")
+    )
+    assert turn["error"] is None
+    assert "failed" not in turn["tool_calls"][-1]["result"]
+
+
+def test_fr_0_40_a_bug_in_ordering_is_said_not_left_hanging(conn, monkeypatch):
+    def broken(conn, **args):
+        raise KeyError("lines")
+
+    monkeypatch.setattr(ordering, "fill_cart", broken)
+    tools.add_items(conn, [{"name": "eggs"}])
+    turn = agent.run_turn(
+        "order the groceries", conn, says(fill_cart=True, reply="On it.")
+    )
+    assert turn["said"] == "Something went wrong with Instacart, please try again."
+    assert turn["tool_calls"][-1]["result"] == {"failed": "KeyError: 'lines'"}

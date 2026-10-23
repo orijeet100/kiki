@@ -25,4 +25,4 @@ Matching an Item without a Product is one Claude request with the Items' names a
 + Matching costs one small request, only when an Item has no Product.
 + The record of what each Order got is there for the List reset and Missing items later.
 - A wrong match stays until the owner changes it; Analysis doesn't revisit Items that have a Product.
-- An Item that has never been ordered gets the top search result for that Cart only, until it shows up in a delivered Order.
+- An Item that has never been ordered gets a search result for that Cart only (one the Store tags "Buy it again" first), until it shows up in a delivered Order.

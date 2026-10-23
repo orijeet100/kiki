@@ -248,7 +248,8 @@ async function page(op, arg) {
   if (op === "cart") {
     // Product page: "Add to cart" puts in one, then the "N in cart" menu sets the exact count.
     // Setting a count, not adding to it, makes a second run give the same Cart.
-    if (arg.address && !text().includes(arg.address)) return { error: "wrong_address" };
+    // The header with the address draws a moment after the page's data is there.
+    if (arg.address && !(await until(() => text().includes(arg.address), 10000))) return { error: "wrong_address" };
     const name = ((document.querySelector("h1") || {}).textContent || document.title).trim();
     const combo = () => [...document.querySelectorAll("[role=combobox]")].find((c) => c.offsetParent);
     // "2 in cart", "1 ct in cart", "1 pkg in cart": the unit depends on how the Product is sold.

@@ -5,6 +5,8 @@ Claude request that says which placed Products are which Item (ADR 0035). Each r
 for the turn log; an extension failure raises InstacartError and the caller says why.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import AgentRunError, ModelAPIError
@@ -42,9 +44,16 @@ def match_products(items: list[str], products: list[dict]) -> dict[str, list[int
         + "\n".join(f"{p['id']}: {p['name']}" for p in products)
     )
     settings = ModelSettings(thinking="low", max_tokens=8192, timeout=60)
-    matches = agent.run_sync(
-        prompt, model=infer_model(model_name()), model_settings=settings
-    ).output
+    # Its own thread: this runs inside the command's agent run, where Pydantic AI refuses a
+    # nested run_sync (it could deadlock), and a new thread starts outside that run.
+    with ThreadPoolExecutor(1) as thread:
+        run = thread.submit(
+            agent.run_sync,
+            prompt,
+            model=infer_model(model_name()),
+            model_settings=settings,
+        )
+        matches = run.result().output
     known = {p["id"] for p in products}
     by_key = {tools.normalize(i): i for i in items}
     return {

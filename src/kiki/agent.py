@@ -232,6 +232,11 @@ def _order(ctx: RunContext[Deps], tool: str, run, reply, /, **args) -> dict:
     except (AgentRunError, ModelAPIError) as e:  # the matching request
         result = {"failed": f"{type(e).__name__}: {e}"}
         ctx.deps.replies.append("I couldn't match your products, please try again.")
+    except Exception as e:  # noqa: BLE001 -- a bug in ordering must not leave the turn hanging
+        result = {"failed": f"{type(e).__name__}: {e}"}
+        ctx.deps.replies.append(
+            "Something went wrong with Instacart, please try again."
+        )
     ctx.deps.tool_calls.append({"name": tool, "args": args, "result": result})
     return result
 

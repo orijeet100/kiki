@@ -5,6 +5,11 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Added
+- Ordering at Wegmans through Instacart (v0.17, ADR 0034, ADR 0035). "Analyze my order" reads the delivered Wegmans orders to 30 River Court and gives each Item the Product that was placed most often (never a shopper's substitute): on the owner's account, 5 orders read and 15 Items matched in 19 s. "Order the groceries" puts every Needed Item in the Instacart Cart at its quantity, by setting the count, so a second run gives the same Cart (17 Items in 54–60 s); the owner checks out. "Use Diamond walnuts for walnuts" and "forget the walnut product" change an Item's Product. Items without one get a search result, "Buy it again" first. Kiki says plainly when Instacart is signed out, wants a human check, shows another address or has changed its page.
+- The Kiki for Instacart extension (`browser/instacart`), loaded once in the owner's own Chrome: Kiki opens a tab there, the extension does the job in that tab only and closes it. No second profile, no Allow dialog, no Claude tokens for reading pages.
+- `products`, `orders` and `order_lines` tables, and `items.product_id`; an existing `kiki.db` keeps its List.
+- A two-tap Reset on the List, in the browser and on the Tab5 (FR-0.35): Frequent items back at their usual quantity, Occasional ones off. Logged as a run with the List as it was.
+- On the Tab5's item sheet, the Product with Forget (FR-0.34); "Filling cart, 4 of 17" in the state line on both screens; History chips for every Product matched, top match and failure.
 - `python -m kiki.stt_bench [model ...]`: Whisper models side by side on Piper-spoken commands, time per command and word accuracy. `distil-small.en` measured 1.53 s per command against 0.56 s for `base.en` (on battery), and no more accurate.
 - Kiki prints its speech-to-text model at start-up (`KIKI_WHISPER_MODEL`).
 - `device/kiki/serial.ps1` sends test commands to the Tab5 over USB serial and prints its log; the Tab5 logs its screen loop's slowest step every 5 s, and `tapitem n` taps the List's row n.
@@ -13,6 +18,8 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
 ### Changed
+- `clear_list` is now `clear_all_items` (ADR 0036): tool names say what they change. Older logs still show their chip.
+- On the Tab5, the orb pauses whenever a sheet reaches over it, not only while renaming: the taller item sheet does.
 - The Tab5 never waits on the network while drawing: the event stream and requests run in their own task (v0.16). A change to the List shows in under 10 ms instead of 94–126 ms (when a tap flipped a row and waited for Kiki), and no request freezes the screen any more (~100 ms each before).
 - On the Tab5, tapping a row opens the item sheet instead of flipping it.
 - The Tab5's List updates its rows in place when only their content changes, instead of rebuilding them (33–37 ms before).

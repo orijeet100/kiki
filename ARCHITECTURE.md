@@ -293,8 +293,9 @@ Kiki fills the Store's Cart; the owner checks out in the Instacart app. Kiki nev
 | Job | What the extension does | Returns |
 |---|---|---|
 | `read_orders {known}` | Reads the first page of the order history (10 orders), then each delivered Order from the Store it doesn't know | `{orders: [{id, retailer, address, delivered_at, state, list_items, lines: [{status, quantity, quantity_type, product_id, product_name}]}]}` |
-| `search {query}` | The Store's search page | `{results: [{id, name}]}`, the top five |
-| `fill_cart {address, lines: [{item, product_id, query, quantity}]}` | For each line: the Product's page (or the top search result when it has none), checks the address, presses **Add to cart** (one), then sets the exact count in the "N in cart" menu and reads it back. A sold-out Product falls back to the next search result | `{lines: [{..., status: added \| top_match \| failed, reason, product_id, product_name}]}` |
+| `search {query}` | The Store's search page | `{results: [{id, name, bought}]}`, the top five; `bought` when the page tags it "Buy it again" |
+| `reload` | Answers, closes the tab, then reloads the extension from disk (`chrome.runtime.reload`): after an edit to `browser/instacart`, no trip to `chrome://extensions` | `{}` |
+| `fill_cart {address, lines: [{item, product_id, query, quantity}]}` | For each line: the Product's page (or a search result when it has none: the first one tagged "Buy it again", else the first), waits up to 10 s for the address in the page's header, presses **Add to cart** (one), then sets the exact count in the "N in cart" menu ("6", "6 ct" or "6 pkgs", by how the Product is sold) and reads it back. A sold-out Product falls back to another search result | `{lines: [{..., status: added \| top_match \| failed, reason, product_id, product_name}]}` |
 
 What the page gives, per line of an Order: `item` is what was placed, `currentItem` is what came (a substitute when `status` is `replaced`), `selectedQuantityValue` the count. The order history card gives the Store's name ("Wegmans +8" when it shows eight more pictures) and its item count, which must match the lines read.
 
@@ -304,12 +305,14 @@ What the page gives, per line of an Order: `item` is what was placed, `currentIt
 
 - `read_new_orders`: asks for the Orders Kiki doesn't know, keeps the delivered ones to `KIKI_ADDRESS` (the first time, the seven newest), checks each line (a known status, a numeric product id, a name, a count; as many lines as the order history says) and saves it with `save_order`. An Order that fails a check isn't saved and is reported in `unreadable_orders` with why, for example `unknown status 'refunded'`: Kiki doesn't guess what a new word means.
 - `learn_product_preferences` ("analyze my order", FR-0.36): reads new Orders, then gives every Item without a Product one. **One Claude request** (`match_products`, ADR 0035) gets the Items' names and the placed Products' names and says which Products are which Item; `preferred_product` then picks, in code, the one in the most Orders, the most recent on a tie (FR-0.37). It never changes an Item that has a Product.
-- `fill_cart` ("order the groceries", FR-0.39): reads new Orders, matches only the Needed Items without a Product, then sends every Needed Item to the extension at its quantity. An Item still without a Product gets the top search result for this Cart only; it's learned once it shows up in a delivered Order. If the matching request fails, the fill goes on with top results (FR-0.40).
-- `choose_product` ("use Diamond walnuts for walnuts", FR-0.38): a placed Product whose name has every word said, else the top search result.
+- `fill_cart` ("order the groceries", FR-0.39): reads new Orders, matches only the Needed Items without a Product, then sends every Needed Item to the extension at its quantity. An Item still without a Product gets a search result for this Cart only, one tagged "Buy it again" first; it's learned once it shows up in a delivered Order. If the matching request fails, the fill goes on with top results (FR-0.40).
+- `choose_product` ("use Diamond walnuts for walnuts", FR-0.38): a placed Product whose name has every word said, else a search result ("Buy it again" first).
 
 **Replies** are Kiki's own, at most two sentences, because the model can't know the result when it writes `reply`: "Your cart is ready with twelve items. Blueberries failed, and two were top matches, details on the screen." The History chips have the details: every top match and failure, every Product matched, every Order that couldn't be read.
 
-**Timing** (measured 2026-10-23): a page load and its step take about 3 to 5 s, so reading five Orders takes about 25 s and filling 18 Items about two minutes. The turn holds the turn lock all that time; the state line shows "Filling cart, 4 of 12".
+**Timing** (measured 2026-10-23 on the owner's account, from typing the command to the reply): a search 3.2 to 3.5 s; "analyze my order" reading five Orders and matching 18 Items 19 to 20 s (5 s with no new Orders); "use ... for walnuts" 4.5 to 5.8 s when it searches; "order the groceries" with 17 Items 54 to 60 s, about 3.3 s an Item. The turn holds the turn lock all that time; the state line shows "Filling cart, 4 of 17".
+
+**The matching request runs on its own thread.** It's made from inside `update_list`, during the command's own agent run, where Pydantic AI refuses a nested `run_sync` (it could deadlock); a fresh thread is outside that run. Found end to end: the unit tests used a fake matcher. Any other error in an ordering step becomes "Something went wrong with Instacart, please try again." rather than a turn that never ends.
 
 ## Matching names
 

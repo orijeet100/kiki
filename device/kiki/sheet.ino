@@ -34,8 +34,16 @@ bool itemSheetClosing = false;
 
 bool itemSheetOpen() { return itemSheetShown; }
 
-// The orb pauses while the sheet moves, and while renaming, when the sheet reaches over it.
-bool itemSheetSliding() { return itemSheetTimer != nullptr || renaming; }
+// The orb pauses while the sheet moves, and whenever the sheet reaches over it (renaming, or an
+// item sheet tall enough since v0.17's Product line): the orb is drawn straight to the panel, over
+// anything LVGL put there.
+bool itemSheetSliding() {
+  if (itemSheetTimer != nullptr || renaming) return true;
+  if (!itemSheetShown) return false;
+  lv_area_t orb;
+  lv_obj_get_coords(orbArea, &orb);
+  return lv_obj_get_y(itemSheet) <= orb.y2;
+}
 
 String capitalized(String name) {
   if (name.length()) name.setCharAt(0, toupper(name[0]));
