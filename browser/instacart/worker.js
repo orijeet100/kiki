@@ -36,6 +36,8 @@ async function run(tabId, id, kiki_url) {
   }
   try {
     await kiki("POST", "/instacart/result", result);
+  } catch (e) {
+    // No Kiki to tell: an old #kiki tab that Chrome restored at start-up, or Kiki stopped.
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
   }
@@ -89,7 +91,9 @@ async function fillLine(tabId, job, line) {
     reason = "no_product";
     if (!id) return { ...line, status: "failed", reason: "not_found" };
   }
-  let r = await go(tabId, `/store/${job.store}/products/${id}`, "cart", { quantity: line.quantity, address: job.address });
+  const product = () => go(tabId, `/store/${job.store}/products/${id}`, "cart", { quantity: line.quantity, address: job.address });
+  let r = await product();
+  if (r.error === "unavailable" && !r.said) r = await product(); // a slow page, not a sold-out one: once more
   if (r.error === "unavailable") {
     const other = await topResult(tabId, job.store, line.query, id);
     if (!other) return { ...line, status: "failed", reason: "sold_out", product_name: r.name };
@@ -258,10 +262,12 @@ async function page(op, arg) {
       return m ? Number(m[1]) : 0;
     };
     const addButton = () => [...document.querySelectorAll("button")].find((b) => b.offsetParent && b.textContent.trim() === "Add to cart");
-    if (!(await until(() => combo() || addButton()))) return { error: "unavailable", name };
+    // No buttons: sold out only if the page says so; otherwise it was slow, and fillLine loads it again.
+    const soldOut = () => /out of stock|sold out|unavailable/i.test(text());
+    if (!(await until(() => combo() || addButton()))) return { error: "unavailable", name, said: soldOut() };
     if (!inCart()) {
       const b = addButton();
-      if (!b) return { error: "unavailable", name };
+      if (!b) return { error: "unavailable", name, said: soldOut() };
       b.click();
       if (!(await until(inCart, 8000))) return { error: "not_added", name };
     }

@@ -17,6 +17,10 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - A new Tab5 keyboard for the text box and renaming: a phone layout (letters, shift and backspace, 123, hide, space and a white Send or Save key), raised letter keys with large labels, quieter function keys, one-shot shift, repeating backspace. It replaces LVGL's stock keyboard with its 1#, ABC and arrow keys. `POST /item` takes `quantity`, `buying_pattern` or `new_name` as well as `needed` (409 for a taken name, 404 for an unknown item). The browser still flips a row on click.
 - `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
+### Fixed
+- An old `#kiki` tab restored by Chrome at start-up made the extension log an error (`worker.js:45`); it now closes the tab quietly.
+- A slow Product page could count as sold out, and the Cart would get a different Product: Kiki now loads it once more first, unless the page says it's out of stock.
+
 ### Changed
 - Ordering in History, on both screens: a few summary chips ("matched 15", "cart: 16 of 17", "1 top match") and a Products row with one line per item, instead of a chip per item (16 chips for one "analyze my order"). Long chips on the Tab5 wrap inside their card instead of running past it.
 - In the browser, List rows show each item's Product under its name, and the Reset button sits on its own surface so it shows on the card. Long Product names no longer widen the page.
