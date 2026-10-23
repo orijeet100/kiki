@@ -57,6 +57,7 @@ uv run --env-file .env python -m kiki.voice   # voice loop + UI at http://127.0.
 uv run --env-file .env python -m kiki.ui      # UI only, with a text box (no microphone)
 uv run pytest -m "not voice and not scenario" # instant tests only
 uv run python -m kiki.latency                 # median voice latency from the turn log (NFR-0.3)
+uv run python -m kiki.stt_bench [model ...]   # Whisper models compared: time and word accuracy
 uv run python -m kiki.screen                  # stream the UI to the Tab5 (start Kiki first)
 arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream  # flash the Tab5
 powershell -ExecutionPolicy Bypass -File device/kiki/build.ps1 -Port COM9  # flash the native Tab5 UI

@@ -696,7 +696,7 @@ def test_fr_0_11_wake_scores_are_logged_and_the_fading_tail_is_not_a_near_miss()
     finally:
         logger.remove(sink)
     assert lines == [
-        "Kiki: almost heard the wake word (score 0.30, needs 0.40)",
+        "Kiki: almost heard the wake word (score 0.30, needs 0.50)",
         "Kiki: wake word heard (score 0.95)",
     ]
 

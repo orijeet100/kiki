@@ -47,9 +47,9 @@ from kiki.events import current_state, record_turn, set_state
 
 SAMPLE_RATE = 16000
 WAKE_CHUNK_SAMPLES = 1280  # openWakeWord scores 80 ms chunks of 16 kHz int16
-# 0.4, not openWakeWord's usual 0.5: a real "hey jarvis" climbed past 0.46 and only crossed
-# 0.5 ~0.3 s later, delaying the chime. Background speech has scored at most 0.24 so far.
-WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.4"))
+# openWakeWord's usual 0.5. On the Tab5's mic, real "hey jarvis" scored 0.73 to 0.90 and talk
+# and TV up to 0.46; the laptop-mic setting of 0.4 woke Kiki about six times in an evening.
+WAKE_THRESHOLD = float(os.environ.get("KIKI_WAKE_THRESHOLD", "0.5"))
 NEAR_MISS_SCORE = (
     0.1  # wake scores between this and the threshold are logged as near-misses
 )
@@ -577,6 +577,7 @@ async def run() -> None:
     print(
         f'Kiki. Say "hey jarvis", then a command. UI: {ui.url(server)}  (Ctrl+C to stop)'
     )
+    print(f"Speech to text: Whisper {WHISPER_MODEL}")
     runner = WorkerRunner(handle_sigint=sys.platform != "win32")
     await runner.add_workers(worker)
     await runner.run()

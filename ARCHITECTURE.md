@@ -56,6 +56,7 @@ src/kiki/
   ui.html     the whole UI: one file, no build step
   speaking-orb.js  the orb: vendored Speaking Orb web component, MIT (ADR 0024)
   latency.py  median latency per stage from the turn log (v0.3)
+  stt_bench.py  speech-to-text models side by side on Piper-spoken commands: time and word accuracy
   voice.py    voice loop (v0.2): WakeGate, Brain, the processor chain, the mic/speaker runner;
               Tab5Mic and Tab5Speaker (v0.14)
   screen.py   streams the UI page to the Tab5 and replays its touches (v0.14)
@@ -125,7 +126,7 @@ Tools that ran before a failure stay in `tool_calls`, so the log still shows the
 
 | Processor | Job |
 |---|---|
-| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.4) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per session) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. After each spoken reply (`BotStoppedSpeakingFrame`) it opens again with no wake word and no chime, for `KIKI_FOLLOW_UP_SECS` (5 s), passing audio only from 0.3 s after playback so Kiki's own voice isn't heard; `follow_up` says which kind of session it is ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md), FR-0.18). It doesn't reopen over an interrupted reply. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
+| `WakeGate` | Scores every 80 ms of mic audio with openWakeWord's bundled "hey jarvis" model, **always and locally**. While closed it drops the audio, so VAD and Whisper never see it (NFR-0.1). It wakes when a chunk scores `KIKI_WAKE_THRESHOLD` (0.5) or more, and logs every wake and near-miss with its score. On the wake word it plays the listening chime and opens. It closes, silently, when `EndOfTurnDetector` says the command is finished (one command per session) or after `KIKI_LISTEN_TIMEOUT_SECS` with no speech. After each spoken reply (`BotStoppedSpeakingFrame`) it opens again with no wake word and no chime, for `KIKI_FOLLOW_UP_SECS` (5 s), passing audio only from 0.3 s after playback so Kiki's own voice isn't heard; `follow_up` says which kind of session it is ([ADR 0025](docs/adr/0025-listen-after-each-reply-and-ignore-what-is-not-a-command.md), FR-0.18). It doesn't reopen over an interrupted reply. If the wake word comes while Kiki is speaking, it broadcasts an `InterruptionFrame` first, which stops the speech (FR-0.12). |
 | `VADProcessor` | Silero VAD. Reports speech starts and every pause of `KIKI_PAUSE_SECS` (0.2 s). |
 | `EndOfTurnDetector` | At each pause, asks Smart Turn v3.2 (bundled ONNX model, ~60 ms on CPU) whether the sentence sounds finished from its intonation. Unfinished: hides the pause, so Whisper keeps buffering the same command and the gate stays open. Finished and still silent `KIKI_END_GRACE_SECS` (0.4 s) later, or after `KIKI_MAX_PAUSE_SECS` (3 s) of silence: sends one stop to Whisper and `UserStoppedSpeakingFrame` up to the gate ([ADR 0021](docs/adr/0021-smart-turn-ends-the-command.md), FR-0.14). Speech within the grace period, like the next item after a list comma, keeps the same command ([ADR 0023](docs/adr/0023-grace-period-after-a-finished-sounding-pause.md)). |
 | `WhisperSTTService` | Transcribes each speech segment locally with `base.en` and a short grocery-vocabulary `initial_prompt` ([ADR 0019](docs/adr/0019-whisper-base-with-vocabulary-prompt.md)), on `KIKI_WHISPER_THREADS` (8) CPU threads. Pipecat's service doesn't expose the thread count, so `processors()` subclasses it to pass one. |
@@ -344,13 +345,13 @@ Environment variables only. A local `.env` is fine (never committed) and is load
 | `KIKI_MODEL` | `anthropic:claude-haiku-5-5` | Pydantic AI model string, `provider:model`. Swap with e.g. `openai:<model>`; `test` runs Pydantic AI's offline TestModel |
 | `KIKI_DB` | `kiki.db` | SQLite file path |
 | `KIKI_LOG` | `logs/turns.jsonl` | Turn log path |
-| `KIKI_WAKE_THRESHOLD` | `0.4` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
+| `KIKI_WAKE_THRESHOLD` | `0.5` | openWakeWord score (0–1) that counts as "hey jarvis". Raise if it wakes by itself, lower if it misses you. On the Tab5's mic (2026-10-22) real wakes scored 0.73–0.90 and talk and TV at most 0.46; 0.4, tuned on the laptop mic, woke about six times in an evening. The terminal logs every wake (`wake word heard (score 0.99)`) and every near-miss (`almost heard the wake word (score 0.42, needs 0.50)`), so you can see how close a missed "hey jarvis" came |
 | `KIKI_LISTEN_TIMEOUT_SECS` | `6` | How long the gate stays open after the wake word if nobody speaks |
 | `KIKI_FOLLOW_UP_SECS` | `5` | How long Kiki listens after each reply for another command without the wake word |
 | `KIKI_PAUSE_SECS` | `0.2` | A pause this long makes Smart Turn check whether the sentence sounds finished |
 | `KIKI_END_GRACE_SECS` | `0.4` | After a pause sounds finished, how long to wait for more words before closing (list commas) |
 | `KIKI_MAX_PAUSE_SECS` | `3` | Silence that ends a command even if it sounded unfinished |
-| `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name. `small.en` is more robust but adds about 1.1 s |
+| `KIKI_WHISPER_MODEL` | `base.en` | faster-whisper model name, printed at start-up. `small.en` is more robust but adds about 1.1 s. `distil-small.en` is no faster than `small.en` on short commands (Whisper's encoder always reads 30 s) and no more accurate than `base.en`: 1.53 s vs 0.56 s per command on battery (`python -m kiki.stt_bench`, 2026-10-22) |
 | `KIKI_WHISPER_THREADS` | `8` | CPU threads for Whisper, one per core of this laptop. faster-whisper's own default is 4, about 0.15 s slower; more threads than cores is slower again |
 | `KIKI_CHIME_VOLUME` | `0.45` | Peak level of the listening chime, 0 to 1 (about -7 dBFS by default) |
 | `KIKI_PIPER_VOICE` | `en_US-lessac-medium` | Piper voice; downloaded on first run to `~/.cache/pipecat/piper` |
