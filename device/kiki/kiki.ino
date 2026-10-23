@@ -35,7 +35,8 @@ struct Item {
   String name;
   int quantity;
   bool needed;
-  bool changed;  // new or different since the last list: gets the blue ring for 1.5 s
+  bool changed;   // new or different since the last list: gets the blue ring for 1.5 s
+  bool frequent;  // Frequent stays on the List when Not needed; Occasional leaves it
 };
 
 struct Chip {
@@ -50,18 +51,27 @@ struct Run {
 
 enum class Link { Connecting, Live, Reconnecting };  // the event stream, as the top bar shows it
 
-// Requests the screen hands to networkTask (events.ino), and its answers.
-enum class PostKind { Flip, Command };
+// An on-screen keyboard (screen.ino): its keys, the text box it types into, and which layer shows.
+enum KeyLayer { KEYS_LOWER, KEYS_UPPER, KEYS_NUMBERS, KEY_LAYERS };
 
-struct Post {  // networkTask deletes the strings
-  PostKind kind;
-  String *json, *subject;  // subject: the item's name, or the command's text
+struct KeyboardState {
+  lv_obj_t *input;
+  KeyLayer layer;
+  const char *maps[KEY_LAYERS][38];  // the layouts, with this keyboard's action label in them
 };
 
-struct PostResult {  // the loop deletes the string
+// Requests the screen hands to networkTask (events.ino), and its answers.
+enum class PostKind { Needed, Quantity, Pattern, Rename, Command };
+
+struct Post {  // networkTask deletes the json; the strings travel on to the PostResult
+  PostKind kind;
+  String *json, *subject, *detail;  // subject: the item's name, or the command; detail: a new name
+};
+
+struct PostResult {  // the loop deletes the strings
   PostKind kind;
   int status;
-  String *subject;
+  String *subject, *detail;
 };
 
 // The orb's types (orb.ino). Declared here because Arduino puts its generated prototypes
@@ -87,7 +97,8 @@ struct OrbMotion {
   std::vector<double> onsets;
 };
 
-std::vector<Item> items;
+std::vector<Item> items;        // what the List shows: Kiki's List plus the edits not yet confirmed
+std::vector<Item> serverItems;  // Kiki's List as it last sent it
 std::deque<Run> runs;  // newest first
 String kikiState = "idle";
 bool runJustFinished = false;  // the next idle shows the check mark first
@@ -118,6 +129,14 @@ void handleSerialTestCommands() {
     pressScreenAlong(x, y, x, y + dy, 400);
   } else if (sscanf(command.c_str(), "tapitem %d", &x) == 1) {  // "tapitem n": a finger on the List's row n
     tapListRow(x);
+  } else if (command.startsWith("key ")) {  // "key a", "key shift", "key action": the keyboard on screen
+    String name = command.substring(4);
+    name.trim();
+    if (lv_obj_t *keys = keyboardShown()) pressKey(keys, name);
+  } else if (command.startsWith("tapsheet ")) {  // "tapsheet plus": a finger on the item sheet's control
+    String control = command.substring(9);
+    control.trim();
+    tapSheetControl(control);
   } else if (sscanf(command.c_str(), "tap %d %d", &x, &y) == 2) {
     Serial.printf("[test] tap %d %d\n", x, y);
     pressScreenFor(x, y, 250);

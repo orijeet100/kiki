@@ -20,6 +20,7 @@ v0.4 (UI: ui.py, started by voice.py or on its own)
   events.publish ──> ui.py (http.server, Server-Sent Events) ──> browser on 127.0.0.1:8765
   browser text box ──> POST /command ──> run_turn (same path as voice)
   list click       ──> POST /item    ──> add_items / remove_items (no model, v0.12)
+  Tab5 item sheet  ──> POST /item    ──> also set_quantity / rename_item (v0.16)
 
 v0.14 (Tab5: a thin client of the laptop over the home Wi-Fi)
   Tab5 mic ──UDP :8768──> Tab5Mic ──> WakeGate ... PiperTTSService ──> Tab5Speaker ──TCP :8769──> Tab5 speaker
@@ -164,7 +165,7 @@ Audio stays in the home (NFR-0.8): with the laptop's mic it never leaves the lap
 | `GET /speaking-orb.js` | the vendored orb script ([ADR 0024](docs/adr/0024-vendor-the-speaking-orb.md)) |
 | `GET /events` | Server-Sent Events: one `snapshot`, then every `state`, `turn` and `list` event; a keep-alive comment every 15 s |
 | `POST /command` | `{"text": "..."}` → 202, then the turn runs in a background thread and its events arrive on `/events` |
-| `POST /item` | `{"name": "...", "needed": true}` → 200 with the tool result; a click on the list (FR-0.27). Runs `add_items` or `remove_items` under the turn lock, publishes a `list` event, and is not a turn: no model, nothing in the turn log |
+| `POST /item` | `{"name": "...", "needed": true}`, `{"name": "...", "quantity": 3}`, `{"name": "...", "buying_pattern": "frequent"}` or `{"name": "...", "new_name": "..."}` → 200 with the tool result; a click on the list (FR-0.27) or an edit in the Tab5's item sheet (FR-0.33). Runs `add_items`, `remove_items`, `set_quantity`, `set_buying_pattern` or `rename_item` under the turn lock, publishes a `list` event, and is not a turn: no model, nothing in the turn log. 409 when the tool refuses (a name that's taken), 404 when a quantity or name is for an unknown item, 400 unless exactly one change is given (quantity 1–99) |
 
 The page (v0.10, laid out in [docs/ui.md](docs/ui.md)) is one centered column: the Speaking Orb, the state label, a one-line summary of the last run, the list in two columns (Needed items first, then Not needed Frequent items dimmed; a click flips one), and the text box docked to the bottom of the window. All runs (heard, what changed as chips, what was said, total latency; per-stage latency and raw tool calls under Details) live in a History sheet. The orb's shape follows `state`; each `turn` event's reply is shown as the orb's caption, using estimated word timings so the browser never speaks it; a turn without an error ends on the orb's check mark. The look comes from [DESIGN.md](DESIGN.md) (Framer palette, dark only): every color is a token in `:root`, including the orb's, which the component reads from `--orb-<state>`. Animations stop under reduced motion. Every value from the log is inserted as text, never as HTML.
 
@@ -214,9 +215,12 @@ The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so 
 
 | File | What |
 |---|---|
-| `kiki.ino` | setup, the main loop and its stall log, the shared state and the serial test commands (`tap`, `tapitem`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
-| `events.ino` | `networkTask`: `GET /events` and the `POST /item` and `POST /command` requests; the loop turns its events (snapshot, state, list, turn) into the screen's state |
-| `serial.ps1` | sends test commands over USB serial and prints the log: `serial.ps1 "tapitem 0" "wait 2" ...` |
+| `kiki.ino` | setup, the main loop and its stall log, the shared state and the serial test commands (`tap`, `tapitem`, `tapsheet`, `key`, `drag`, `shot`, `silence`, `redraw`, `orbspeak`) |
+| `events.ino` | `networkTask`: `GET /events` and the `POST /item` and `POST /command` requests; the loop turns its events (snapshot, state, list, turn) into the screen's state, and holds Kiki's List while edits are on their way |
+| `sheet.ino` | the item sheet (FR-0.33): this order's quantity and Needed, Frequent or Occasional, rename, remove; built once at start-up (rename mode and its keyboard too, hidden), slid up from below the screen |
+| `screen.ino`'s keyboard | `makeKeyboard`: our own layout on an LVGL button matrix (LVGL's keyboard widget types its key labels, and ours say "space" and "Send"); three layers, one-shot shift, a key handler that sends `LV_EVENT_READY` (action key) or `LV_EVENT_CANCEL` (hide key) to its text box; the white action key and the quiet keys' small labels are drawn in a draw-task event. `key <name>` over serial presses a key through the same handler |
+| `serial.ps1` | sends test commands over USB serial and prints the log: `serial.ps1 "tapitem 0" "wait 2" "tapsheet plus" ...` |
+| `shot.ps1` | saves what the Tab5 shows as a PNG through the `shot` command: `shot.ps1 -Out sheet.png "tapitem 0" "wait 1.5"` |
 | `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List, text box and keyboard, History sheet, volume bar |
 | `orb.ino` | the Speaking Orb's particle field and shapes, ported; the speaking pulse from the reply's words |
 | `audio.ino` | mic and speaker, as in `device/stream` |
@@ -232,7 +236,7 @@ The orb draws 3,000 particles at half resolution in its own task on core 0, into
 | Tap → History open | didn't open | 130–137 ms |
 | Mic packets per 10 s | 502 | 502 |
 
-**Nothing on the screen waits on the network** (v0.16): `loop()` draws (touch, orb, LVGL) and never touches Wi-Fi. `networkTask` keeps the event stream open, reads its lines and sends the POSTs, and talks to the loop through three FreeRTOS queues: event lines in, requests out, results back; only the loop touches LVGL and the screen's state. A List tap flips its row and the count at once and then queues the request; if Kiki refuses or can't be reached, the row flips back with the reason, and a command that wasn't taken goes back into the text box. Every 5 s the loop logs its slowest step (`[loop] slowest step 4 ms (orb), 2100 loops in 5 s`). Measured on the Tab5 (2026-10-22, `serial.ps1 "tapitem 0"`):
+**Nothing on the screen waits on the network** (v0.16): `loop()` draws (touch, orb, LVGL) and never touches Wi-Fi. `networkTask` keeps the event stream open, reads its lines and sends the POSTs, and talks to the loop through three FreeRTOS queues: event lines in, requests out, results back; only the loop touches LVGL and the screen's state. Edits change the screen first and then queue their request (below); a command that wasn't taken goes back into the text box with the reason. Every 5 s the loop logs its slowest step (`[loop] slowest step 4 ms (orb), 2100 loops in 5 s`). Measured on the Tab5 (2026-10-22, `serial.ps1 "tapitem 0"`):
 
 | | Before | After |
 |---|---|---|
@@ -241,7 +245,18 @@ The orb draws 3,000 particles at half resolution in its own task on core 0, into
 | Slowest loop step around a tap | 102–106 ms (the POST, inside LVGL's tap handler) | 33–37 ms (rebuilding the List when Kiki's new List arrives) |
 | Slowest loop step while Kiki is offline | each retry could block 0.5 s (connect timeout) | 4–6 ms |
 
-The List is still rebuilt from scratch on every `list` event (33–37 ms) and the snapshot on connecting takes 54 ms; updating rows in place is the next step.
+**Edits** (FR-0.33): every change in the item sheet (`sheet.ino`) updates `items` and the row at once, then queues its request. While any edit is on its way (or the stepper hasn't been still for 350 ms), Kiki's `list` events are held and only the newest is kept; when the last edit is answered it's shown, and if an edit failed and no newer List came, `serverItems` (Kiki's List as last sent) comes back. Holding the List keeps an older List, arriving between two quick taps, from flicking a row back and forth. `showList` updates the rows in place when their count is unchanged and rebuilds them only when it changes (3–8 ms). The sheet is built once at start-up, parked below the screen and only slid; it has no dimmed backdrop, because a full-screen redraw takes ~78 ms here. The orb pauses only while the sheet moves. Measured on the Tab5 (2026-10-23, `serial.ps1 "tapitem 0" "tapsheet plus" ...`):
+
+| | |
+|---|---|
+| Tap → the sheet's first frame | 3–4 ms |
+| Tap on –, +, Needed, Not needed → on the panel | 4–9 ms |
+| Quick stepper taps | one request, 350 ms after the last |
+| Sheet slide, opening / closing | 5 frames in ~280 ms (~55 ms a frame) / 6–7 frames in ~225 ms, for the redesigned sheet (~760 px tall); the first, shorter sheet took 7 frames to open |
+
+The opening slide is the slowest thing left: each frame redraws the whole visible sheet in software into a PSRAM buffer and copies it to the panel (~16 ms of the 55), so a taller sheet slides slower. Sliding a once-drawn picture of the sheet instead of redrawing its widgets each frame is the likely next step. LVGL's PPA draw unit would take the drawing to hardware, but in LVGL 9.6 it calls `esp_cache_get_line_size_by_addr`, which this Arduino core's ESP-IDF doesn't have.
+
+**Arduino and prototypes:** Arduino puts its generated prototypes before the first line that looks like a function used as a pointer, and a comment like `// built once (buildItemSheet)` on a declaration counts. That put them above `struct Item` and broke the build; keep `(` followed by a function's name out of comments on declarations.
 
 Lessons: 168 KB of static buffers in internal RAM starved Wi-Fi and the speaker's DMA and rebooted the Tab5 when Kiki spoke (the particles now live in PSRAM); a part chunk left in the speaker FIFO kept the mic paused for good (both programs now drop it after 200 ms with no new audio); a screenshot over USB freezes the screen for seconds, so none are taken during live replies. Build and flash with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9` (it adds the sketch folder to the include path so LVGL finds `lv_conf.h`).
 
@@ -411,6 +426,6 @@ Apart from the vendored orb, the UI adds no dependencies: `http.server`, Server-
 - `test_tools.py`, `test_events.py`, `test_agent.py`: deterministic, no network. Always run. `test_agent.py` scripts the model with Pydantic AI's `FunctionModel`, so it checks what the model is sent, retries and guards without an API call.
 - `test_voice.py`: the gate tests use a fake detector and are instant. Real-model tests put `RealTimeMic` first, which releases audio at real-time pace: Smart Turn and VAD keep wall-clock time, and audio pushed all at once hid the list-comma problem. Waits are streamed silence, never `SleepFrame`, because a real mic keeps sending silence and the 3 s fallback counts it. Tests marked `voice` run the real wake word, Silero, Whisper and Piper on speech synthesized by Piper ([ADR 0017](docs/adr/0017-test-voice-with-synthesized-speech.md)); `test_scenario_by_voice` (also marked `scenario`) speaks the seven v0.2 scenarios and v0.12 scenarios 13, 16 and 22 to the real agent. First run downloads the Whisper and Piper models.
 - `test_latency.py`: the log report. `test_voice.py::test_nfr_0_3_*` (marked `voice` and `scenario`) speaks twenty commands through the full chain to the real agent and requires a median `total` of 2 s or less.
-- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, list clicks (`POST /item`), localhost binding, and the Host, content-type and length checks.
+- `test_ui.py`: real HTTP against a server on a random port with a scripted model: the page, the orb script served locally, the live event sequence for a typed command (`thinking`, `turn`, `list`, `idle`), past runs in the snapshot, list clicks and item edits (`POST /item`: needed, quantity, new name, refusals), localhost binding, and the Host, content-type and length checks.
 - `test_tab5.py`: the laptop's side of each Tab5 link over real sockets, with plain sockets standing in for the Tab5: mic packets become audio frames in order (FR-0.29); a second of speaker audio arrives whole, over about 0.85 s (FR-0.30); the screen sends the newest frame after each `shown` and turns touch lines into touch events (FR-0.31); the keyboard script is added after `Page.enable` and before the page loads (FR-0.32). `test_nfr_0_8_*` (marked `voice`) sends synthesized speech as the Tab5's UDP packets through the real wake word and Whisper and checks the model gets only text. The Tab5 program itself is checked by hand.
 - `test_scenarios.py`: sends each ROADMAP scenario to the real model and asserts on tool calls and final list state, not on exact wording. A full run is 23 short Haiku turns, about a cent. Needs `ANTHROPIC_API_KEY`; skipped automatically without it, or deselect with `-m "not scenario"`.

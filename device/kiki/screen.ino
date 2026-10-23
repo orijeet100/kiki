@@ -98,8 +98,16 @@ void onClick(lv_obj_t *obj, lv_event_cb_t handler, void *data = nullptr) {
 int16_t pressedFromX, pressedFromY, pressedToX, pressedToY;
 uint32_t pressedSince = 0, pressedFor = 0;
 uint32_t tapReleasedAt = 0;  // measuring: a test tap's release, until the first pixels it causes reach the panel
-uint32_t flipTappedAt = 0;   // measuring: a List tap, until its flipped row reaches the panel
-bool flipRowUpdated = false;
+uint32_t flushMicros = 0, flushedPixels = 0;  // measuring: time copying to the panel, and how much
+
+// measuring: a tap that changed the screen, until the change reaches the panel (flushToPanel)
+uint32_t measuredTapAt = 0;
+const char *measuredChange = nullptr;
+
+void measureFromTap(const char *change) {
+  measuredTapAt = millis();
+  measuredChange = change;
+}
 
 // A press from (x0, y0) moving to (x1, y1) over ms, as a finger would: a tap when they're the same.
 void pressScreenAlong(int x0, int y0, int x1, int y1, uint32_t ms) {
@@ -187,11 +195,14 @@ void flushToPanel(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
     Serial.printf("[measure] tap to pixels on the panel: %lu ms after release\n", millis() - tapReleasedAt);
     tapReleasedAt = 0;
   }
-  if (flipRowUpdated) {
-    Serial.printf("[measure] tap to flipped row on the panel: %lu ms\n", millis() - flipTappedAt);
-    flipRowUpdated = false;
+  if (measuredChange) {
+    Serial.printf("[measure] tap to %s on the panel: %lu ms\n", measuredChange, millis() - measuredTapAt);
+    measuredChange = nullptr;
   }
+  uint32_t start = micros();
   blitToPanel((const uint16_t *)pixels, lv_area_get_width(area), lv_area_get_height(area), area->x1, area->y1, 1);
+  flushMicros += micros() - start;
+  flushedPixels += lv_area_get_size(area);
   lv_display_flush_ready(display);
 }
 
@@ -201,7 +212,7 @@ uint32_t millisForLvgl() { return millis(); }
 
 void orbAreaCoords(lv_area_t *area) { lv_obj_get_coords(orbArea, area); }
 
-bool orbCovered() { return historySheet || !lv_obj_has_flag(keyboard, LV_OBJ_FLAG_HIDDEN); }
+bool orbCovered() { return historySheet || itemSheetSliding() || !lv_obj_has_flag(keyboard, LV_OBJ_FLAG_HIDDEN); }
 
 // The caption sits over the orb's lower halo; LVGL draws those rows while it shows.
 int orbRowsUnderCaption() {
@@ -319,20 +330,10 @@ void showListCount() {
   lv_label_set_text(listCountLabel, items.empty() ? "" : (String(needed) + (needed == 1 ? " item" : " items")).c_str());
 }
 
-// The row flips as the finger lifts, then Kiki is told (setNeeded); if it refuses, finishPost
-// flips it back. Kiki's new List, a moment later, puts the row in its place.
-void flipItem(lv_event_t *event) {
+// A row opens its item's sheet (sheet.ino, FR-0.33).
+void onRowTapped(lv_event_t *event) {
   size_t index = (intptr_t)lv_event_get_user_data(event);
-  if (index >= items.size()) return;
-  flipTappedAt = millis();
-  Item &item = items[index];
-  item.needed = !item.needed;
-  lv_obj_t *row = lv_event_get_current_target_obj(event);
-  lv_obj_set_style_opa(row, item.needed ? LV_OPA_COVER : 115, 0);
-  lv_label_set_text(lv_obj_get_child(row, 1), quantityText(item).c_str());
-  showListCount();
-  flipRowUpdated = true;
-  setNeeded(item);
+  if (index < items.size()) openItemSheet(items[index]);
 }
 
 void styleRowAtRest(lv_obj_t *row) {
@@ -342,6 +343,23 @@ void styleRowAtRest(lv_obj_t *row) {
   lv_obj_set_style_border_color(row, SURFACE_2, 0);
 }
 
+// A row's look from its item: the name, dimmed to 45% when Not needed, the quantity, and the blue
+// ring when it changed. Returns whether it has the ring.
+bool showRow(lv_obj_t *row, const Item &item) {
+  String name = item.name;
+  if (name.length()) name.setCharAt(0, toupper(name[0]));
+  lv_label_set_text(lv_obj_get_child(row, 0), name.c_str());
+  lv_label_set_text(lv_obj_get_child(row, 1), quantityText(item).c_str());
+  lv_obj_set_style_opa(row, item.needed ? LV_OPA_COVER : 115, 0);
+  styleRowAtRest(row);
+  if (!item.changed) return false;
+  fill(row, SURFACE_2);
+  lv_obj_set_style_border_side(row, LV_BORDER_SIDE_FULL, 0);
+  lv_obj_set_style_border_width(row, 2, 0);
+  lv_obj_set_style_border_color(row, ACCENT_BLUE, 0);
+  return true;
+}
+
 // A changed row lifts to surface 2 with a blue ring for 1.5 s (DESIGN.md, v0.9).
 void clearChangedRows(lv_timer_t *) {
   ringTimer = nullptr;
@@ -349,11 +367,28 @@ void clearChangedRows(lv_timer_t *) {
   for (lv_obj_t *row : listRowObjects) styleRowAtRest(row);
 }
 
+void startRingTimer() {
+  if (ringTimer) lv_timer_delete(ringTimer);
+  ringTimer = lv_timer_create(clearChangedRows, 1500, nullptr);
+  lv_timer_set_repeat_count(ringTimer, 1);
+}
+
+// Updates the rows in place when there are as many as before (a flip, a new quantity or name,
+// Kiki's echo of an edit): only their text and look change. Rebuilds them when the count changes:
+// creating rows took 33-37 ms, longer than two frames.
 void showList() {
+  refreshItemSheet();
+  showListCount();
+  if (items.size() == listRowObjects.size() && !items.empty()) {
+    bool anyChanged = false;
+    for (size_t i = 0; i < items.size(); i++) anyChanged |= showRow(listRowObjects[i], items[i]);
+    if (anyChanged) startRingTimer();
+    return;
+  }
+  uint32_t start = millis();
   int32_t scrolledTo = lv_obj_get_scroll_y(listRows);
   lv_obj_clean(listRows);
   listRowObjects.clear();
-  showListCount();
 
   if (items.empty()) {
     lv_obj_t *empty = makeBox(listRows);
@@ -366,39 +401,25 @@ void showList() {
 
   bool anyChanged = false;
   for (size_t i = 0; i < items.size(); i++) {
-    const Item &item = items[i];
     lv_obj_t *row = makeBox(listRows);
     lv_obj_set_size(row, ROW_W, ROW_H);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(row, 15, 0);
     lv_obj_set_style_pad_hor(row, 14, 0);
     stackChildren(row, LV_FLEX_FLOW_ROW, 12, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER);
-    styleRowAtRest(row);
     fill(row, SURFACE_2, LV_STATE_PRESSED);
-    if (!item.needed) lv_obj_set_style_opa(row, 115, 0);  // Not needed: dimmed to 45%
-    if (item.changed) {
-      fill(row, SURFACE_2);
-      lv_obj_set_style_border_side(row, LV_BORDER_SIDE_FULL, 0);
-      lv_obj_set_style_border_width(row, 2, 0);
-      lv_obj_set_style_border_color(row, ACCENT_BLUE, 0);
-      anyChanged = true;
-    }
-    String name = item.name;
-    if (name.length()) name.setCharAt(0, toupper(name[0]));
-    lv_obj_t *nameLabel = makeText(row, &inter_24, INK, name);
+    lv_obj_t *nameLabel = makeText(row, &inter_24, INK, "");
     lv_label_set_long_mode(nameLabel, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(nameLabel, 1);
-    makeText(row, &inter_20, INK_MUTED, quantityText(item));
-    onClick(row, flipItem, (void *)(intptr_t)i);
+    makeText(row, &inter_20, INK_MUTED, "");
+    anyChanged |= showRow(row, items[i]);
+    onClick(row, onRowTapped, (void *)(intptr_t)i);
     listRowObjects.push_back(row);
   }
-  if (anyChanged) {
-    if (ringTimer) lv_timer_delete(ringTimer);
-    ringTimer = lv_timer_create(clearChangedRows, 1500, nullptr);
-    lv_timer_set_repeat_count(ringTimer, 1);
-  }
+  if (anyChanged) startRingTimer();
   lv_obj_update_layout(listRows);
   lv_obj_scroll_to_y(listRows, scrolledTo, LV_ANIM_OFF);
+  Serial.printf("[measure] rebuilt the List (%d rows) in %lu ms\n", (int)items.size(), millis() - start);
 }
 
 // The card takes the height of its rows, up to six rows; past that the rows scroll inside it.
@@ -481,8 +502,8 @@ void showFormError(const String &text) {
 void onTextBoxEvent(lv_event_t *event) {
   lv_event_code_t code = lv_event_get_code(event);
   if (code == LV_EVENT_CLICKED) openKeyboard();
-  else if (code == LV_EVENT_READY) submitCommand();   // the keyboard's OK and Enter keys
-  else if (code == LV_EVENT_CANCEL) closeKeyboard();  // its hide-keyboard key
+  else if (code == LV_EVENT_READY) submitCommand();   // the keyboard's Send key
+  else if (code == LV_EVENT_CANCEL) closeKeyboard();  // its hide key
 }
 
 void buildDock(lv_obj_t *screen) {
@@ -526,21 +547,170 @@ void buildDock(lv_obj_t *screen) {
   makeText(dock, &inter_20, INK_MUTED, "Or say “hey jarvis”, then the command.");
 }
 
+// ---------- the on-screen keyboard (v0.16) ----------
+// Laid out like a phone's: three rows of letters (the middle one inset half a key), shift and
+// backspace beside the last, then 123, hide, space and the action key. Letters are raised
+// charcoal keys; shift, 123, hide and backspace are quieter, with small muted labels; the action
+// (Send, Save) is the one white key. Shift capitalizes one letter; holding backspace repeats. The
+// action and hide keys end typing the way Enter and Escape do: LV_EVENT_READY and
+// LV_EVENT_CANCEL on the text box. Built on a button matrix: LVGL's own keyboard types its labels.
+
+const char *const KEY_SHIFT = LV_SYMBOL_UP, *const KEY_BACKSPACE = LV_SYMBOL_BACKSPACE, *const KEY_HIDE = LV_SYMBOL_KEYBOARD;
+const char *const KEY_ACTION = "\x01";  // stands for the keyboard's action label in the layouts
+
+const char *const KEY_MAPS[KEY_LAYERS][38] = {
+    {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+     " ", "a", "s", "d", "f", "g", "h", "j", "k", "l", " ", "\n",
+     KEY_SHIFT, "z", "x", "c", "v", "b", "n", "m", KEY_BACKSPACE, "\n",
+     "123", KEY_HIDE, "space", KEY_ACTION, ""},
+    {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+     " ", "A", "S", "D", "F", "G", "H", "J", "K", "L", " ", "\n",
+     KEY_SHIFT, "Z", "X", "C", "V", "B", "N", "M", KEY_BACKSPACE, "\n",
+     "123", KEY_HIDE, "space", KEY_ACTION, ""},
+    {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\n",
+     " ", "-", "/", ":", ";", "(", ")", "&", "@", "\"", " ", "\n",
+     " ", ".", ",", "?", "!", "'", "+", "=", KEY_BACKSPACE, "\n",
+     "abc", KEY_HIDE, "space", KEY_ACTION, ""},
+};
+
+static constexpr lv_buttonmatrix_ctrl_t LETTER = (lv_buttonmatrix_ctrl_t)(2 | LV_BUTTONMATRIX_CTRL_NO_REPEAT),
+                                         GAP = (lv_buttonmatrix_ctrl_t)(1 | LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED),
+                                         QUIET = (lv_buttonmatrix_ctrl_t)(LV_BUTTONMATRIX_CTRL_CHECKED | LV_BUTTONMATRIX_CTRL_NO_REPEAT),
+                                         ACTION = (lv_buttonmatrix_ctrl_t)(6 | LV_BUTTONMATRIX_CTRL_NO_REPEAT | LV_BUTTONMATRIX_CTRL_CUSTOM_1);
+static constexpr lv_buttonmatrix_ctrl_t BACKSPACE_KEY = (lv_buttonmatrix_ctrl_t)(3 | LV_BUTTONMATRIX_CTRL_CHECKED);  // repeats
+static constexpr lv_buttonmatrix_ctrl_t SPACE = (lv_buttonmatrix_ctrl_t)(9 | LV_BUTTONMATRIX_CTRL_NO_REPEAT);
+
+// Widths add up to 20 a row. Shift lights up (a letter key's look) while it's on.
+const lv_buttonmatrix_ctrl_t KEY_CTRLS[KEY_LAYERS][34] = {
+    {LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER,
+     GAP, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, GAP,
+     (lv_buttonmatrix_ctrl_t)(3 | QUIET), LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, BACKSPACE_KEY,
+     (lv_buttonmatrix_ctrl_t)(3 | QUIET), (lv_buttonmatrix_ctrl_t)(2 | QUIET), SPACE, ACTION},
+    {LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER,
+     GAP, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, GAP,
+     (lv_buttonmatrix_ctrl_t)(3 | LV_BUTTONMATRIX_CTRL_NO_REPEAT), LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, BACKSPACE_KEY,
+     (lv_buttonmatrix_ctrl_t)(3 | QUIET), (lv_buttonmatrix_ctrl_t)(2 | QUIET), SPACE, ACTION},
+    {LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER,
+     GAP, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, LETTER, GAP,
+     (lv_buttonmatrix_ctrl_t)(3 | LV_BUTTONMATRIX_CTRL_HIDDEN | LV_BUTTONMATRIX_CTRL_DISABLED), LETTER, LETTER, LETTER, LETTER, LETTER,
+     LETTER, LETTER, BACKSPACE_KEY,
+     (lv_buttonmatrix_ctrl_t)(3 | QUIET), (lv_buttonmatrix_ctrl_t)(2 | QUIET), SPACE, ACTION},
+};
+
+void showKeyLayer(lv_obj_t *keys, KeyLayer layer) {
+  KeyboardState *state = (KeyboardState *)lv_obj_get_user_data(keys);
+  state->layer = layer;
+  lv_buttonmatrix_set_map(keys, state->maps[layer]);
+  lv_buttonmatrix_set_ctrl_map(keys, KEY_CTRLS[layer]);
+}
+
+void onKeyPressed(lv_event_t *event) {
+  lv_obj_t *keys = lv_event_get_target_obj(event);
+  KeyboardState *state = (KeyboardState *)lv_obj_get_user_data(keys);
+  uint32_t id = lv_buttonmatrix_get_selected_button(keys);
+  if (id == LV_BUTTONMATRIX_BUTTON_NONE || !state->input) return;
+  const char *key = lv_buttonmatrix_get_button_text(keys, id);
+  if (!strcmp(key, KEY_SHIFT)) showKeyLayer(keys, state->layer == KEYS_UPPER ? KEYS_LOWER : KEYS_UPPER);
+  else if (!strcmp(key, "123")) showKeyLayer(keys, KEYS_NUMBERS);
+  else if (!strcmp(key, "abc")) showKeyLayer(keys, KEYS_LOWER);
+  else if (!strcmp(key, KEY_BACKSPACE)) lv_textarea_delete_char(state->input);
+  else if (!strcmp(key, KEY_HIDE)) lv_obj_send_event(state->input, LV_EVENT_CANCEL, nullptr);
+  else if (lv_buttonmatrix_has_button_ctrl(keys, id, LV_BUTTONMATRIX_CTRL_CUSTOM_1)) lv_obj_send_event(state->input, LV_EVENT_READY, nullptr);
+  else {
+    lv_textarea_add_text(state->input, strcmp(key, "space") ? key : " ");
+    if (state->layer == KEYS_UPPER) showKeyLayer(keys, KEYS_LOWER);  // shift is for one letter
+  }
+}
+
+// The keys' looks beyond the style: the action key white with black text, quiet keys' labels
+// small and muted (symbols stay at 24 px, where their font is).
+void onKeyDrawn(lv_event_t *event) {
+  lv_draw_task_t *task = lv_event_get_draw_task(event);
+  lv_draw_dsc_base_t *base = (lv_draw_dsc_base_t *)lv_draw_task_get_draw_dsc(task);
+  if (base->part != LV_PART_ITEMS) return;
+  lv_obj_t *keys = lv_event_get_target_obj(event);
+  bool action = lv_buttonmatrix_has_button_ctrl(keys, base->id1, LV_BUTTONMATRIX_CTRL_CUSTOM_1);
+  if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_FILL && action) {
+    bool pressed = lv_obj_has_state(keys, LV_STATE_PRESSED) && lv_buttonmatrix_get_selected_button(keys) == base->id1;
+    lv_draw_fill_dsc_t *fill = lv_draw_task_get_fill_dsc(task);
+    fill->color = pressed ? lv_color_hex(0xd8d8d8) : INK;
+    fill->opa = LV_OPA_COVER;
+  } else if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_LABEL) {
+    lv_draw_label_dsc_t *label = lv_draw_task_get_label_dsc(task);
+    const char *key = lv_buttonmatrix_get_button_text(keys, base->id1);
+    bool symbol = (uint8_t)key[0] == 0xEF;  // LV_SYMBOL_* live in the private-use area
+    if (action) {
+      label->color = ON_PRIMARY;
+      label->font = &inter_24;
+    } else if (symbol || lv_buttonmatrix_has_button_ctrl(keys, base->id1, LV_BUTTONMATRIX_CTRL_CHECKED) || !strcmp(key, "space")) {
+      label->color = INK_MUTED;
+      label->font = symbol ? &inter_24 : &inter_20;
+    }
+  }
+}
+
+// A keyboard in a canvas tray with a hairline edge; `action` labels its white key ("Send").
+lv_obj_t *makeKeyboard(lv_obj_t *parent, int width, const char *action) {
+  KeyboardState *state = new KeyboardState{nullptr, KEYS_LOWER, {}};
+  for (int layer = 0; layer < KEY_LAYERS; layer++)
+    for (int i = 0; i < 38; i++) state->maps[layer][i] = KEY_MAPS[layer][i] == KEY_ACTION ? action : KEY_MAPS[layer][i];
+  lv_obj_t *keys = lv_buttonmatrix_create(parent);
+  lv_obj_set_user_data(keys, state);
+  lv_obj_remove_style_all(keys);
+  lv_obj_set_size(keys, width, 400);
+  fill(keys, CANVAS);
+  lv_obj_set_style_radius(keys, 30, 0);
+  lv_obj_set_style_border_width(keys, 1, 0);
+  lv_obj_set_style_border_color(keys, HAIRLINE, 0);
+  lv_obj_set_style_pad_all(keys, 14, 0);
+  lv_obj_set_style_pad_row(keys, 12, 0);
+  lv_obj_set_style_pad_column(keys, 9, 0);
+  fill(keys, SURFACE_2, LV_PART_ITEMS);  // letters: raised, a hairline catching the light on top
+  lv_obj_set_style_border_side(keys, LV_BORDER_SIDE_TOP, LV_PART_ITEMS);
+  lv_obj_set_style_border_width(keys, 1, LV_PART_ITEMS);
+  lv_obj_set_style_border_color(keys, HAIRLINE, LV_PART_ITEMS);
+  lv_obj_set_style_radius(keys, 16, LV_PART_ITEMS);
+  lv_obj_set_style_text_font(keys, &inter_32_bold, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(keys, INK, LV_PART_ITEMS);
+  fill(keys, SURFACE_1, LV_PART_ITEMS | LV_STATE_CHECKED);  // shift, 123, hide, backspace: quieter
+  lv_obj_set_style_border_width(keys, 0, LV_PART_ITEMS | LV_STATE_CHECKED);
+  fill(keys, HAIRLINE, LV_PART_ITEMS | LV_STATE_PRESSED);
+  fill(keys, HAIRLINE, LV_PART_ITEMS | LV_STATE_CHECKED | LV_STATE_PRESSED);
+  lv_obj_add_flag(keys, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+  lv_obj_add_event_cb(keys, onKeyDrawn, LV_EVENT_DRAW_TASK_ADDED, nullptr);
+  lv_obj_add_event_cb(keys, onKeyPressed, LV_EVENT_VALUE_CHANGED, nullptr);
+  showKeyLayer(keys, KEYS_LOWER);
+  return keys;
+}
+
+// "key <label>" over serial: presses a key of the keyboard on screen through its own handler
+// (shift, backspace, hide and action by name, or the key's text).
+void pressKey(lv_obj_t *keys, const String &name) {
+  KeyboardState *state = (KeyboardState *)lv_obj_get_user_data(keys);
+  const char *want = name == "shift" ? KEY_SHIFT : name == "backspace" ? KEY_BACKSPACE : name == "hide" ? KEY_HIDE : name.c_str();
+  uint32_t id = 0;
+  for (const char *const *key = state->maps[state->layer]; **key; key++) {  // the map ends with ""
+    if (!strcmp(*key, "\n")) continue;
+    bool action = lv_buttonmatrix_has_button_ctrl(keys, id, LV_BUTTONMATRIX_CTRL_CUSTOM_1);
+    if ((name == "action" && action) || (!action && !strcmp(*key, want))) {
+      Serial.printf("[test] key %s\n", name.c_str());
+      lv_buttonmatrix_set_selected_button(keys, id);
+      lv_obj_send_event(keys, LV_EVENT_VALUE_CHANGED, nullptr);
+      return;
+    }
+    id++;
+  }
+}
+
+void typeInto(lv_obj_t *keys, lv_obj_t *input) {
+  KeyboardState *state = (KeyboardState *)lv_obj_get_user_data(keys);
+  state->input = input;
+  showKeyLayer(keys, KEYS_LOWER);
+}
+
 void buildKeyboard(lv_obj_t *screen) {
-  keyboard = lv_keyboard_create(screen);
-  lv_obj_remove_style_all(keyboard);
-  lv_obj_set_size(keyboard, W, 400);
-  fill(keyboard, SURFACE_1);
-  lv_obj_set_style_pad_all(keyboard, 12, 0);
-  lv_obj_set_style_pad_row(keyboard, 10, 0);
-  lv_obj_set_style_pad_column(keyboard, 10, 0);
-  fill(keyboard, SURFACE_2, LV_PART_ITEMS);
-  fill(keyboard, HAIRLINE, LV_PART_ITEMS | LV_STATE_PRESSED);
-  fill(keyboard, SURFACE_2, LV_PART_ITEMS | LV_STATE_CHECKED);
-  lv_obj_set_style_radius(keyboard, 15, LV_PART_ITEMS);
-  lv_obj_set_style_text_font(keyboard, &inter_24, LV_PART_ITEMS);
-  lv_obj_set_style_text_color(keyboard, INK, LV_PART_ITEMS);
-  lv_keyboard_set_textarea(keyboard, commandInput);
+  keyboard = makeKeyboard(screen, W - 24, "Send");
+  typeInto(keyboard, commandInput);
   lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -813,6 +983,7 @@ void startScreen() {
   buildDock(screen);
   buildKeyboard(screen);
   buildVolumeBar(screen);
+  buildItemSheet();  // once: opening it only slides it up (sheet.ino)
 
   showConnection(Link::Connecting);
   showKikiState("idle", false);

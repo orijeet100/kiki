@@ -131,6 +131,62 @@ def test_fr_0_27_rejects_a_malformed_click(server, body):
     assert post_item(server, body).status == 400
 
 
+def test_fr_0_33_an_edit_sets_the_quantity_and_the_page_gets_the_new_list(server):
+    events = read_events(request(server, "GET", "/events"))
+    next(events)  # snapshot
+
+    response = post_item(server, {"name": "bread", "quantity": 3})
+    assert response.status == 200
+    assert json.loads(response.read()) == {"name": "bread", "quantity": 3}
+    assert [(i["name"], i["quantity"]) for i in next(events)["items"]] == [("bread", 3)]
+
+
+def test_fr_0_33_an_edit_renames_an_item(server):
+    events = read_events(request(server, "GET", "/events"))
+    next(events)  # snapshot
+
+    assert post_item(server, {"name": "bread", "new_name": "sourdough"}).status == 200
+    assert [i["name"] for i in next(events)["items"]] == ["sourdough"]
+
+
+def test_fr_0_33_an_edit_makes_an_item_frequent_so_it_stays_when_not_needed(server):
+    events = read_events(request(server, "GET", "/events"))
+    next(events)  # snapshot
+
+    response = post_item(server, {"name": "bread", "buying_pattern": "frequent"})
+    assert response.status == 200
+    assert json.loads(response.read()) == {
+        "name": "bread",
+        "buying_pattern": "frequent",
+    }
+    next(events)
+    post_item(server, {"name": "bread", "needed": False})
+    assert [(i["name"], i["status"]) for i in next(events)["items"]] == [
+        ("bread", "not_needed")
+    ]
+
+
+def test_fr_0_33_a_refused_edit_says_why(server, tmp_path):
+    tools.add_items(connect(str(tmp_path / "ui.db")), [{"name": "milk"}])
+    assert post_item(server, {"name": "bread", "new_name": "milk"}).status == 409
+    assert post_item(server, {"name": "rice", "quantity": 2}).status == 404
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": "bread", "quantity": 0},
+        {"name": "bread", "quantity": "2"},
+        {"name": "bread", "quantity": True},
+        {"name": "bread", "new_name": " "},
+        {"name": "bread", "buying_pattern": "weekly"},
+        {"name": "bread", "quantity": 2, "needed": True},
+    ],
+)
+def test_fr_0_33_rejects_a_malformed_edit(server, body):
+    assert post_item(server, body).status == 400
+
+
 def test_nfr_0_7_rejects_a_click_that_is_not_json(server):
     assert (
         post_item(server, {"name": "bread", "needed": False}, "text/plain").status

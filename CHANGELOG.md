@@ -7,11 +7,15 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ### Added
 - `python -m kiki.stt_bench [model ...]`: Whisper models side by side on Piper-spoken commands, time per command and word accuracy. `distil-small.en` measured 1.53 s per command against 0.56 s for `base.en` (on battery), and no more accurate.
 - Kiki prints its speech-to-text model at start-up (`KIKI_WHISPER_MODEL`).
-
 - `device/kiki/serial.ps1` sends test commands to the Tab5 over USB serial and prints its log; the Tab5 logs its screen loop's slowest step every 5 s, and `tapitem n` taps the List's row n.
+- The item sheet on the Tab5 (FR-0.33): tap a row to set Needed or Not needed, this order's quantity (– and +), Frequent or Occasional, rename it, or remove it (Not needed). Each change is on the screen in 4–12 ms and sent to Kiki after; quick stepper taps are one request; a refused change goes back with the reason. Groups sit as raised plates in hairline-edged trays, under small spaced-out eyebrows; Done is the white pill with its check in a black circle; renaming shows the name in a large field over the keyboard, whose white key saves.
+- A new Tab5 keyboard for the text box and renaming: a phone layout (letters, shift and backspace, 123, hide, space and a white Send or Save key), raised letter keys with large labels, quieter function keys, one-shot shift, repeating backspace. It replaces LVGL's stock keyboard with its 1#, ABC and arrow keys. `POST /item` takes `quantity`, `buying_pattern` or `new_name` as well as `needed` (409 for a taken name, 404 for an unknown item). The browser still flips a row on click.
+- `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
 ### Changed
-- The Tab5 never waits on the network while drawing: the event stream and requests run in their own task (v0.16). A List tap shows the flipped row in 9–12 ms instead of 94–126 ms, and no longer freezes the screen for ~100 ms; a refused flip goes back with the reason.
+- The Tab5 never waits on the network while drawing: the event stream and requests run in their own task (v0.16). A change to the List shows in under 10 ms instead of 94–126 ms (when a tap flipped a row and waited for Kiki), and no request freezes the screen any more (~100 ms each before).
+- On the Tab5, tapping a row opens the item sheet instead of flipping it.
+- The Tab5's List updates its rows in place when only their content changes, instead of rebuilding them (33–37 ms before).
 - Wake threshold back to 0.5 (`KIKI_WAKE_THRESHOLD`). On the Tab5's mic, real "hey jarvis" scored 0.73 to 0.90 and talk and TV up to 0.46; at 0.4 Kiki woke by itself about six times in an evening.
 
 ## [v0.15] - 2026-10-22

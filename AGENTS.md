@@ -62,6 +62,7 @@ uv run python -m kiki.screen                  # stream the UI to the Tab5 (start
 arduino-cli compile --upload -p COM9 -b m5stack:esp32:m5stack_tab5:CDCOnBoot=cdc device/stream  # flash the Tab5
 powershell -ExecutionPolicy Bypass -File device/kiki/build.ps1 -Port COM9  # flash the native Tab5 UI
 powershell -ExecutionPolicy Bypass -File device/kiki/serial.ps1 "tapitem 0" "wait 2"  # Tab5 test commands, prints its log
+powershell -ExecutionPolicy Bypass -File device/kiki/shot.ps1 -Out screen.png        # what the Tab5 shows, as a PNG
 ```
 
 With `KIKI_MIC=tab5` and `KIKI_SPEAKER=tab5`, `kiki.voice` uses the Tab5's mic and speaker instead of the laptop's. Never play test sounds through a device's speaker at an untested volume; the Tab5 starts at 5%.

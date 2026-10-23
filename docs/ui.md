@@ -67,7 +67,18 @@ Under "reduce motion" the sphere freezes; captions still appear.
 
 In two columns. Title "Grocery list" with the count of Needed items ("4 items") on the right. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
 
-Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s. Empty: "Nothing on the list yet." with a hint to say "hey jarvis, add milk".
+Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s.
+
+On the Tab5, tapping a row opens the item sheet instead (FR-0.33; the browser gets it next). It rises from the bottom with a grab handle; the item's name, large, under a spaced-out eyebrow saying FREQUENT or OCCASIONAL, with Rename and × beside it; then two groups, each a raised plate in a dark tray with a hairline edge:
+
+- **This order:** the quantity with round – and + on the same line, and a Needed | Not needed switch under it.
+- **On the list:** a Frequent | Occasional switch, with one line saying what it means: Frequent "stays on the list, dimmed, when it's not needed", Occasional "leaves the list when it's not needed".
+
+Then Remove (Not needed, the item stays known) in red on a charcoal pill, and Done as the white pill with its check in a black circle. Rename swaps the groups for the name in a large field (same tray, its edge blue while typing), a line saying Kiki will use the new name by voice too, and the keyboard with Save as its white key; its hide key or × goes back to the sheet with the old name. The sheet rises to fit.
+
+**The Tab5's keyboard** (for the text box and for renaming) is laid out like a phone's: three rows of letters, the middle one inset half a key; shift and backspace beside the last row; then 123, hide, a wide space bar and the action key (Send for the text box, Save for renaming). Letters are raised charcoal keys with large bold labels and a hairline along their top; shift, 123, hide and backspace are quieter, darker keys with small muted labels; the action key is the one white key. Shift capitalizes one letter, and holding backspace repeats. The keyboard sits in a dark tray with a hairline edge, like the sheet's groups.
+
+Every change is on the screen at once and goes to Kiki after; one Kiki refuses goes back, with the reason in red under the name. Tapping another row while it's open switches it to that item; × or Done closes it. It has no dimmed backdrop: on the Tab5 that would redraw the whole screen. Empty: "Nothing on the list yet." with a hint to say "hey jarvis, add milk".
 
 ## Run cards
 
@@ -88,9 +99,11 @@ Time and source (voice or text), total latency; Heard, Did (chips such as "added
 - v0.9: same layout, Framer look.
 - v0.10: the Speaking Orb, one centered column with a docked text box, and the History sheet. (A first v0.10 draft put the stage and the list side by side; it read as left, right, then down, so everything moved onto one axis.)
 - v0.12: Needed and Not needed items; clicking a row flips it.
+- v0.16: on the Tab5, tapping a row opens the item sheet (Needed, quantity, Frequent or Occasional, rename, remove).
 
 ## Still open
 
+- **Item sheet in the browser:** the Tab5 has it (v0.16); the browser still flips a row on click.
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
 - **Not needed Occasional items:** they vanish from the list; the run card shows them. A brief strike-through could show it in the list too.

@@ -37,16 +37,54 @@ def send_command(text: str, conn: sqlite3.Connection, model=None) -> None:
     events.set_state("error" if turn["error"] else "idle")
 
 
-def set_needed(name: str, needed: bool, conn: sqlite3.Connection) -> dict:
-    """A click on the list (FR-0.27): the same tools as a spoken add or remove, no model."""
+def item_change(body: dict) -> tuple[str, bool | int | str] | None:
+    """The one change a POST /item asks for: needed, quantity, buying_pattern or new_name; None
+    if malformed."""
+    keys = ("needed", "quantity", "buying_pattern", "new_name")
+    changes = [key for key in keys if key in body]
+    if len(changes) != 1:
+        return None
+    key, value = changes[0], body[changes[0]]
+    if key == "needed" and isinstance(value, bool):
+        return key, value
+    if key == "quantity" and type(value) is int and 1 <= value <= 99:
+        return key, value
+    if key == "buying_pattern" and value in ("frequent", "occasional"):
+        return key, value
+    if (
+        key == "new_name"
+        and isinstance(value, str)
+        and 0 < len(value.strip()) <= MAX_COMMAND_CHARS
+    ):
+        return key, value.strip()
+    return None
+
+
+def edit_item(name: str, change: tuple, conn: sqlite3.Connection) -> tuple[int, dict]:
+    """A click or an edit on the list (FR-0.27, FR-0.33): the same tools as speaking, no model.
+
+    Returns the HTTP status with the tool's result: 409 when the tool refuses (a name that's
+    taken), 404 when there's no such Item to change.
+    """
+    key, value = change
     with turn_lock:
-        if needed:
+        if key == "needed" and value:
             result = tools.add_items(conn, [{"name": name}])
-        else:
+        elif key == "needed":
             result = tools.remove_items(conn, [name])
+        elif key == "quantity":
+            result = tools.set_quantity(conn, name, value)
+        elif key == "buying_pattern":
+            result = tools.set_buying_pattern(conn, name, value)
+        else:
+            result = tools.rename_item(conn, name, value)
         items = tools.read_list(conn)["items"]
     events.publish({"type": "list", "items": items})
-    return result
+    if "error" in result:
+        return 409, result
+    if key != "needed" and "not_found" in result:  # remove_items always lists not_found
+        return 404, result
+    return 200, result
 
 
 def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHandler]:
@@ -96,10 +134,13 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
             if not text or len(text) > MAX_COMMAND_CHARS:
                 return self.send_error(400)
             if self.path == "/item":
-                if not isinstance(body.get("needed"), bool):
+                change = item_change(body)
+                if change is None:
                     return self.send_error(400)
-                result = set_needed(text, body["needed"], conn)
-                return self._send(200, "application/json", json.dumps(result).encode())
+                status, result = edit_item(text, change, conn)
+                return self._send(
+                    status, "application/json", json.dumps(result).encode()
+                )
             threading.Thread(
                 target=send_command, args=(text, conn, model), daemon=True
             ).start()

@@ -24,7 +24,7 @@ try {
   foreach ($command in $Commands) {
     if ($command -match '^wait ([\d.]+)$') { Show-LogFor ([double]$Matches[1]); continue }
     $serial.WriteLine($command)
-    Show-LogFor 0.2
+    Show-LogFor 0.05
   }
   Show-LogFor $Seconds
 } finally {

@@ -51,8 +51,8 @@ void networkTask(void *) {
     }
     Post post;
     if (xQueueReceive(posts, &post, pdMS_TO_TICKS(10))) {
-      int status = postJson(post.kind == PostKind::Flip ? "/item" : "/command", *post.json);
-      PostResult result{post.kind, status, post.subject};
+      int status = postJson(post.kind == PostKind::Command ? "/command" : "/item", *post.json);
+      PostResult result{post.kind, status, post.subject, post.detail};
       xQueueSend(postResults, &result, portMAX_DELAY);
       delete post.json;
     }
@@ -66,12 +66,37 @@ void startNetwork() {
   xTaskCreate(networkTask, "network", 8192, nullptr, 2, nullptr);
 }
 
-void sendPost(PostKind kind, JsonDocument &body, const String &subject) {
+// ---------- edits: the screen changes first, Kiki is told after ----------
+// While an edit is on its way, Kiki's List events are held (the newest one is kept): an older
+// List arriving between two quick edits would otherwise flick the row back and forth. When the
+// last edit is answered, the newest List is shown; if an edit failed and none came, the List as
+// Kiki last sent it comes back.
+int editsInFlight = 0;
+bool quantityUnsent = false;  // the item sheet waits for the stepper to settle (sheet.ino)
+bool editFailed = false;
+String heldList;
+
+bool editsSyncing() { return editsInFlight > 0 || quantityUnsent; }
+
+void showKikisList() {
+  if (heldList.length()) {
+    String json = heldList;
+    heldList = "";
+    handleEvent(json.c_str());
+  } else if (editFailed) {
+    items = serverItems;
+    showList();
+  }
+  editFailed = false;
+}
+
+void sendPost(PostKind kind, JsonDocument &body, const String &subject, const String &detail = "") {
   String *json = new String();
   serializeJson(body, *json);
-  Post post{kind, json, new String(subject)};
+  Post post{kind, json, new String(subject), new String(detail)};
+  if (kind != PostKind::Command) editsInFlight++;
   if (!xQueueSend(posts, &post, 0)) {  // eight requests already waiting: Kiki is unreachable
-    PostResult result{kind, -1, post.subject};
+    PostResult result{kind, -1, post.subject, post.detail};
     xQueueSend(postResults, &result, 0);
     delete json;
   }
@@ -93,6 +118,7 @@ void handleNetworkNews() {
   while (xQueueReceive(postResults, &result, 0)) {
     finishPost(result);
     delete result.subject;
+    delete result.detail;
   }
 }
 
@@ -113,6 +139,10 @@ void handleEvent(const char *json) {
   } else if (type == "state") {
     setKikiState(event["value"] | "idle");
   } else if (type == "list") {
+    if (editsSyncing()) {
+      heldList = json;
+      return;
+    }
     readItems(event["items"], true);
     showList();
   } else if (type == "turn") {
@@ -141,7 +171,8 @@ void readItems(JsonArrayConst list, bool markChanges) {
   std::vector<Item> previous = std::move(items);
   items.clear();
   for (JsonObjectConst entry : list) {
-    Item item{entry["name"].as<String>(), entry["quantity"] | 1, entry["status"] == "needed", false};
+    Item item{entry["name"].as<String>(), entry["quantity"] | 1, entry["status"] == "needed", false,
+              entry["buying_pattern"] == "frequent"};
     if (markChanges) {
       item.changed = true;
       for (const Item &before : previous)
@@ -150,6 +181,7 @@ void readItems(JsonArrayConst list, bool markChanges) {
     }
     items.push_back(item);
   }
+  serverItems = items;
 }
 
 // ---------- runs: what History and the last-run line show ----------
@@ -257,13 +289,34 @@ int postJson(const char *path, const String &json) {
 
 String failureReason(int status) { return status < 0 ? String("Kiki is offline") : "HTTP " + String(status); }
 
-// The same request as clicking a row in the browser (FR-0.27), for an item the screen has already
-// flipped; Kiki's new List comes back as an event.
-void setNeeded(const Item &item) {
+// The item sheet's edits (FR-0.33), each already on the screen; Kiki's new List comes back as an
+// event. Needed is the same request as clicking a row in the browser (FR-0.27).
+void sendNeeded(const String &name, bool needed) {
   JsonDocument body;
-  body["name"] = item.name;
-  body["needed"] = item.needed;
-  sendPost(PostKind::Flip, body, item.name);
+  body["name"] = name;
+  body["needed"] = needed;
+  sendPost(PostKind::Needed, body, name);
+}
+
+void sendQuantity(const String &name, int quantity) {
+  JsonDocument body;
+  body["name"] = name;
+  body["quantity"] = quantity;
+  sendPost(PostKind::Quantity, body, name);
+}
+
+void sendPattern(const String &name, bool frequent) {
+  JsonDocument body;
+  body["name"] = name;
+  body["buying_pattern"] = frequent ? "frequent" : "occasional";
+  sendPost(PostKind::Pattern, body, name);
+}
+
+void sendRename(const String &name, const String &newName) {
+  JsonDocument body;
+  body["name"] = name;
+  body["new_name"] = newName;
+  sendPost(PostKind::Rename, body, name, newName);
 }
 
 // The text box is already cleared; the answer arrives as a turn event.
@@ -273,18 +326,25 @@ void sendCommand(const String &text) {
   sendPost(PostKind::Command, body, text);
 }
 
-// A refused flip goes back, and a refused command goes back into the text box, with the reason.
+String editFailure(int status) {
+  return status == 409 ? String("that name is taken") : status == 404 ? String("Kiki doesn't know it any more") : failureReason(status);
+}
+
+// A refused edit undoes itself (showKikisList), and a refused command goes back into the text
+// box, with the reason.
 void finishPost(const PostResult &result) {
   const String &subject = *result.subject;
-  if (result.kind == PostKind::Flip) {
+  if (result.kind != PostKind::Command) {
+    editsInFlight--;
     if (result.status == 200) {
       showFormError("");
-      return;
+    } else {
+      editFailed = true;
+      String reason = "Couldn't change " + subject + " (" + editFailure(result.status) + ").";
+      showFormError(reason);
+      sheetEditFailed(subject, *result.detail, reason);
     }
-    for (Item &item : items)
-      if (item.name == subject) item.needed = !item.needed;
-    showList();
-    showFormError("Couldn't change " + subject + " (" + failureReason(result.status) + ").");
+    if (!editsSyncing()) showKikisList();
   } else if (result.status == 202) {
     showFormError("");
   } else {
