@@ -478,7 +478,7 @@ class Brain(FrameProcessor):
         if self._follow_up() and turn["said"] == DIDNT_CATCH:
             turn["said"] = ""  # logged as heard, never spoken
             set_state("idle")  # before the turn event, so the UI shows no check mark
-            record_turn(turn, tools.read_list(self._conn)["items"])
+            record_turn(turn, tools.read_all_items(self._conn)["items"])
             return
         self._last_error = bool(turn["error"])
         self._waiting_for_speech = (turn, time.monotonic())
@@ -492,7 +492,7 @@ class Brain(FrameProcessor):
             turn["latency_ms"]["total"] = round(
                 (first_audio - self._speech_ended) * 1000
             )
-        record_turn(turn, tools.read_list(self._conn)["items"])
+        record_turn(turn, tools.read_all_items(self._conn)["items"])
 
 
 def processors(conn, model=None) -> list[FrameProcessor]:

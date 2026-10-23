@@ -5,6 +5,7 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Added
+- Every item in reach (v0.18, FR-0.41): under the List, a closed "Not on the list · 19" part with every other item Kiki knows, dimmed and by name. In the browser a click puts one back on the List; on the Tab5 a tap opens its item sheet. Every row ends with F (Frequent) or O (Occasional).
 - Ordering at Wegmans through Instacart (v0.17, ADR 0034, ADR 0035). "Analyze my order" reads the delivered Wegmans orders to 30 River Court and gives each Item the Product that was placed most often (never a shopper's substitute): on the owner's account, 5 orders read and 15 Items matched in 19 s. "Order the groceries" puts every Needed Item in the Instacart Cart at its quantity, by setting the count, so a second run gives the same Cart (17 Items in 54–60 s); the owner checks out. "Use Diamond walnuts for walnuts" and "forget the walnut product" change an Item's Product. Items without one get a search result, "Buy it again" first. Kiki says plainly when Instacart is signed out, wants a human check, shows another address or has changed its page.
 - The Kiki for Instacart extension (`browser/instacart`), loaded once in the owner's own Chrome: Kiki opens a tab there, the extension does the job in that tab only and closes it. No second profile, no Allow dialog, no Claude tokens for reading pages.
 - `products`, `orders` and `order_lines` tables, and `items.product_id`; an existing `kiki.db` keeps its List.
@@ -22,6 +23,8 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - A slow Product page could count as sold out, and the Cart would get a different Product: Kiki now loads it once more first, unless the page says it's out of stock.
 
 ### Changed
+- The `list` and `snapshot` events carry every Item, with `on_list`; the List the model sees is unchanged.
+- The Tab5's List card stops at four and a half rows and scrolls inside: at six it pushed the volume bar off the screen.
 - Ordering in History, on both screens: a few summary chips ("matched 15", "cart: 16 of 17", "1 top match") and a Products row with one line per item, instead of a chip per item (16 chips for one "analyze my order"). Long chips on the Tab5 wrap inside their card instead of running past it.
 - In the browser, List rows show each item's Product under its name, and the Reset button sits on its own surface so it shows on the card. Long Product names no longer widen the page.
 - `clear_list` is now `clear_all_items` (ADR 0036): tool names say what they change. Older logs still show their chip.

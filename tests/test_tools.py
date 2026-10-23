@@ -193,3 +193,18 @@ def test_fr_0_26_clear_makes_everything_not_needed_and_returns_what_was_needed(c
     assert [(i["name"], i["status"]) for i in tools.read_list(conn)["items"]] == [
         ("milk", "not_needed")
     ]
+
+
+def test_fr_0_41_the_screens_get_every_item_the_list_first(conn):
+    tools.add_items(conn, [{"name": "milk"}, {"name": "walnuts"}, {"name": "beetroot"}])
+    tools.set_buying_pattern(conn, "milk", "frequent")
+    tools.remove_items(conn, ["milk", "walnuts", "beetroot"])
+    tools.add_items(conn, [{"name": "bread"}])
+    rows = [(i["name"], i["on_list"]) for i in tools.read_all_items(conn)["items"]]
+    assert rows == [
+        ("bread", True),
+        ("milk", True),
+        ("beetroot", False),
+        ("walnuts", False),
+    ]
+    assert [i["name"] for i in tools.read_list(conn)["items"]] == ["bread", "milk"]
