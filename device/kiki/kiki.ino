@@ -45,9 +45,16 @@ struct Chip {
   bool failed;
 };
 
+struct ProductRow {  // what ordering did for one item (v0.17): its Product, a guess, a failure
+  String item, of, note;
+  bool failed;
+  bool wrap;  // the Items still without a Product: every name matters, so it wraps
+};
+
 struct Run {
   String time, source, latency, heard, said, error, details;
   std::vector<Chip> chips;
+  std::vector<ProductRow> products;
 };
 
 enum class Link { Connecting, Live, Reconnecting };  // the event stream, as the top bar shows it

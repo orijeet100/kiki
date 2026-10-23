@@ -80,13 +80,15 @@ lv_obj_t *makePillButton(lv_obj_t *parent, const String &text, bool primary) {
   return button;
 }
 
-lv_obj_t *makeChip(lv_obj_t *parent, const Chip &chip, lv_color_t background) {
+// maxTextWidth: a long chip wraps inside its card instead of running past the edge.
+lv_obj_t *makeChip(lv_obj_t *parent, const Chip &chip, lv_color_t background, int32_t maxTextWidth = 0) {
   lv_obj_t *box = makeBox(parent);
   fill(box, background);
   lv_obj_set_style_radius(box, 9, 0);
   lv_obj_set_style_pad_hor(box, 12, 0);
   lv_obj_set_style_pad_ver(box, 5, 0);
-  makeText(box, &inter_20, chip.failed ? ERROR_RED : INK, chip.text);
+  lv_obj_t *text = makeText(box, &inter_20, chip.failed ? ERROR_RED : INK, chip.text);
+  if (maxTextWidth) lv_obj_set_style_max_width(text, maxTextWidth, 0);
   return box;
 }
 
@@ -338,7 +340,7 @@ void showLastRun() {
   lv_obj_t *heard = makeText(lastRunRow, &inter_20, INK, "“" + last.heard + "”");
   lv_label_set_long_mode(heard, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_style_max_width(heard, COLUMN_W - 40, 0);
-  for (const Chip &chip : last.chips) makeChip(lastRunRow, chip, SURFACE_1);
+  for (const Chip &chip : last.chips) makeChip(lastRunRow, chip, SURFACE_1, COLUMN_W - 44);
   if (last.error.length()) makeChip(lastRunRow, {"error", true}, SURFACE_1);
 }
 
@@ -797,12 +799,16 @@ void buildVolumeBar(lv_obj_t *screen) {
 
 // ---------- History sheet ----------
 
+// The text width a run card's Did chip can take: the History sheet, less the list's and the card's
+// padding, the row's label and the chip's own padding.
+static constexpr int32_t RUN_TEXT_W = SHEET_W - 2 * 30 - 2 * 22 - (100 + 14) - 2 * 12;
+
 lv_obj_t *addRunLine(lv_obj_t *card, const char *tag) {
   lv_obj_t *line = makeBox(card);
   lv_obj_set_width(line, LV_PCT(100));
   stackChildren(line, LV_FLEX_FLOW_ROW, 14, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_t *tagLabel = makeText(line, &inter_20, INK_MUTED, tag);
-  lv_obj_set_width(tagLabel, 80);
+  lv_obj_set_width(tagLabel, 100);  // fits "Products"
   lv_obj_set_style_pad_top(tagLabel, 3, 0);  // sits on the 24 px line's baseline
   return line;
 }
@@ -832,7 +838,27 @@ lv_obj_t *addRunCard(lv_obj_t *list, const Run &run) {
   lv_obj_t *chips = makeBox(addRunLine(card, "Did"));
   lv_obj_set_flex_grow(chips, 1);
   stackChildren(chips, LV_FLEX_FLOW_ROW_WRAP, 8, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  for (const Chip &chip : run.chips) makeChip(chips, chip, SURFACE_1);
+  for (const Chip &chip : run.chips) makeChip(chips, chip, SURFACE_1, RUN_TEXT_W);
+  if (!run.products.empty()) {  // ordering: one line per item, the item, then its Product (v0.17)
+    lv_obj_t *rows = makeBox(addRunLine(card, "Products"));
+    lv_obj_set_flex_grow(rows, 1);
+    stackChildren(rows, LV_FLEX_FLOW_COLUMN, 6, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    for (const ProductRow &product : run.products) {
+      lv_obj_t *row = makeBox(rows);
+      lv_obj_set_width(row, LV_PCT(100));
+      stackChildren(row, LV_FLEX_FLOW_ROW, 10, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+      makeText(row, &inter_20, INK, product.item);
+      lv_obj_t *of = makeText(row, &inter_20, product.failed ? ERROR_RED : INK_MUTED, product.of);
+      lv_obj_set_flex_grow(of, 1);
+      if (product.wrap) {
+        lv_label_set_long_mode(of, LV_LABEL_LONG_MODE_WRAP);
+      } else {
+        lv_obj_set_height(of, lv_font_get_line_height(&inter_20));  // one line, ending in "…"
+        lv_label_set_long_mode(of, LV_LABEL_LONG_MODE_DOTS);
+      }
+      if (product.note.length()) makeChip(row, {product.note, false}, SURFACE_1);
+    }
+  }
   addWrappedText(addRunLine(card, "Said"), &inter_24, INK, run.said);
   if (run.error.length()) lv_obj_set_width(addWrappedText(card, &inter_20, ERROR_RED, run.error), LV_PCT(100));
   lv_obj_set_width(addWrappedText(card, &inter_20, INK_MUTED, run.details), LV_PCT(100));
