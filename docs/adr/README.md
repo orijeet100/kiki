@@ -59,3 +59,6 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0031](0031-tab5-volume-in-the-samples-under-a-fixed-ceiling.md) | The Tab5's volume is applied to the samples, under a fixed ceiling, after a compressor | Accepted |
 | [0032](0032-device-code-lives-in-this-repo.md) | Device code lives in this repo, one Arduino sketch per folder under `device/`, built with arduino-cli | Accepted |
 | [0033](0033-draw-the-ui-natively-on-the-tab5.md) | Draw the UI natively on the Tab5 with LVGL, alongside the streamed page | Accepted |
+| [0034](0034-reach-instacart-through-a-kiki-extension-in-the-owners-chrome.md) | Reach Instacart through a Kiki extension in the owner's own Chrome; Kiki fills the Cart and never checks out | Accepted |
+| [0035](0035-learn-each-items-product-from-what-was-placed.md) | Learn each Item's Product from what was placed in past Orders; Claude matches, code picks | Accepted |
+| [0036](0036-tool-names-say-what-they-change.md) | Tool names say what they change; `clear_list` becomes `clear_all_items` | Accepted |

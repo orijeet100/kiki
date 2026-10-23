@@ -162,7 +162,9 @@ def test_fr_0_3_quantity_below_one_is_rejected_before_anything_changes(conn):
 
 
 def test_nfr_0_4_tool_errors_are_logged_and_retried(conn, monkeypatch):
-    monkeypatch.setattr(tools, "clear_list", lambda conn: {"error": "disk on fire"})
+    monkeypatch.setattr(
+        tools, "clear_all_items", lambda conn: {"error": "disk on fire"}
+    )
     model, seen = scripted(
         update(clear=True, reply="Cleared."), reply(agent.DIDNT_CATCH)
     )

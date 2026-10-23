@@ -130,6 +130,7 @@
     background: var(--surface-1); border-radius: var(--rounded-xl);
   }
   .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 0 10px; }
+  .list-head .count { margin-right: auto; } /* the count beside the heading, Reset on the right */
   .list h2 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; letter-spacing: -0.8px; }
   .count { color: var(--ink-muted); font-size: 13px; font-weight: 500; letter-spacing: -0.13px; font-variant-numeric: tabular-nums; }
   ul.items { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
@@ -257,6 +258,7 @@
     <div class="list-head">
       <h2 id="list-heading">Grocery list</h2>
       <span class="count" id="count"></span>
+      <button class="button secondary" id="reset" type="button" title="Frequent items back at their usual quantity, occasional ones off">Reset</button>
     </div>
     <ul class="items enter" id="items"></ul>
   </section>
@@ -339,7 +341,8 @@
       const key = item.name.toLowerCase();
       const off = item.status !== "needed";
       next.set(key, `${item.quantity} ${item.status}`);
-      const button = el("button", { type: "button", class: "flip", title: off ? "Mark needed" : "Mark not needed" },
+      const product = item.product_name ? ` · ${item.product_name}` : "";
+      const button = el("button", { type: "button", class: "flip", title: (off ? "Mark needed" : "Mark not needed") + product },
         el("span", { class: "name" }, item.name),
         el("span", { class: "qty" }, off ? "Not needed" : item.quantity > 1 ? `× ${item.quantity}` : ""));
       button.addEventListener("click", () => setNeeded(item.name, off));
@@ -380,15 +383,42 @@
         return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} → ${args.buying_pattern}`);
       case "rename_item":
         return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name} → ${args.new_name}`);
-      case "clear_list":
+      case "clear_list": // the name before v0.17, still in older logs
+      case "clear_all_items":
         return el("span", { class: "chip" }, `cleared ${result.removed.length} item${result.removed.length === 1 ? "" : "s"}`);
+      case "reset_list":
+        return el("span", { class: "chip" }, `reset: ${result.needed.length} needed`);
+      case "set_product_for_item":
+        if (result.failed) return el("span", { class: "chip bad" }, `Instacart: ${result.failed}`);
+        if (result.not_found) return el("span", { class: "chip" }, `not on list: ${result.not_found}`);
+        if (result.no_results) return el("span", { class: "chip bad" }, `no results: ${result.no_results}`);
+        return el("span", { class: "chip" }, `${args.name} → ${result.product_name}`);
+      case "forget_product_for_item":
+        return el("span", { class: "chip" }, result.not_found ? `not on list: ${result.not_found}` : `${args.name}: product forgotten`);
+      case "learn_product_preferences": {
+        if (result.failed) return el("span", { class: "chip bad" }, `Instacart: ${result.failed}`);
+        const out = [el("span", { class: "chip" }, `read ${result.new_orders} new order${result.new_orders === 1 ? "" : "s"}`)];
+        result.matched.forEach((m) => out.push(el("span", { class: "chip" }, `${m.name} → ${m.product_name}`)));
+        if (result.no_product.length) out.push(el("span", { class: "chip" }, "no product: " + names(result.no_product)));
+        result.unreadable_orders.forEach((o) => out.push(el("span", { class: "chip bad" }, `order ${o.order_id}: ${o.why}`)));
+        return out;
+      }
+      case "fill_cart": {
+        if (result.failed) return el("span", { class: "chip bad" }, `Instacart: ${result.failed}`);
+        const lines = result.lines || [];
+        const out = [el("span", { class: "chip" }, `cart: ${lines.filter((l) => l.status !== "failed").length} of ${lines.length} added`)];
+        if (result.matching_failed) out.push(el("span", { class: "chip bad" }, "couldn't check past orders"));
+        lines.filter((l) => l.status === "top_match").forEach((l) => out.push(el("span", { class: "chip" }, `top match: ${l.item} → ${l.product_name}`)));
+        lines.filter((l) => l.status === "failed").forEach((l) => out.push(el("span", { class: "chip bad" }, `failed: ${l.item} (${l.reason})`)));
+        return out;
+      }
       default:
         return el("span", { class: "chip" }, name);
     }
   }
 
   function chips(turn) {
-    return turn.tool_calls.length ? turn.tool_calls.map(chip) : [el("span", { class: "chip" }, "no change")];
+    return turn.tool_calls.length ? turn.tool_calls.flatMap(chip) : [el("span", { class: "chip" }, "no change")];
   }
 
   function seconds(ms) { return ms == null ? "–" : `${(ms / 1000).toFixed(1)} s`; }
@@ -460,6 +490,8 @@
         showState(event.value);
       } else if (event.type === "list") {
         showList(event.items, true);
+      } else if (event.type === "progress") {
+        $("state").textContent = event.text; // "Filling cart, 4 of 12" while the orb thinks
       } else if (event.type === "turn") {
         addRun(event);
         turnJustFinished = !event.error;
@@ -500,6 +532,26 @@
       $("form-error").textContent = `Couldn't change ${name} (${error.message}).`;
     }
   }
+
+  // Reset takes two taps, so a stray one can't start the List over (FR-0.35).
+  let resetArmed;
+  $("reset").addEventListener("click", async () => {
+    const button = $("reset");
+    if (!resetArmed) {
+      button.textContent = "Tap again to reset";
+      resetArmed = setTimeout(() => { resetArmed = null; button.textContent = "Reset"; }, 3000);
+      return;
+    }
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    button.textContent = "Reset";
+    try {
+      const response = await fetch("/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      $("form-error").textContent = `Couldn't reset the list (${error.message}).`;
+    }
+  });
 
   $("history-open").addEventListener("click", () => sheet.showModal());
   $("history-close").addEventListener("click", () => sheet.close());

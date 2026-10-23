@@ -187,7 +187,7 @@ def test_fr_0_24_rename_keeps_everything_else(conn):
 def test_fr_0_26_clear_makes_everything_not_needed_and_returns_what_was_needed(conn):
     tools.add_items(conn, [{"name": "bread"}, {"name": "milk", "quantity": 2}])
     tools.set_buying_pattern(conn, "milk", "frequent")
-    assert tools.clear_list(conn) == {
+    assert tools.clear_all_items(conn) == {
         "removed": [{"name": "bread", "quantity": 1}, {"name": "milk", "quantity": 2}]
     }
     assert [(i["name"], i["status"]) for i in tools.read_list(conn)["items"]] == [

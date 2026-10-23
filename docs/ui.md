@@ -45,7 +45,7 @@ From top to bottom:
 | Element | Shows |
 |---|---|
 | Orb | The Speaking Orb. Its shape follows the state (table below). When a run arrives, Kiki's reply appears as the orb's caption, word by word, the words flying out of the orb as particles. The browser never speaks it; Piper already did |
-| State label | Idle, Listening…, Thinking…, Speaking, Something went wrong (in red). The one display-size line on the page |
+| State label | Idle, Listening…, Thinking…, Speaking, Something went wrong (in red). The one display-size line on the page. While Kiki fills the Cart it says how far it is: "Filling cart, 4 of 12" (v0.17) |
 | Last run | One quiet line: what Kiki heard, in quotes, then what it did as chips ("added ice cubes"). Clicking it opens History. Before the first run: three example commands that fill the text box when clicked |
 | List | See below |
 | Text box | A pill composer with a white Send button, so the UI works without a microphone. Under it: “Or say “hey jarvis”, then the command.” A failed send shows the error under the box |
@@ -65,7 +65,7 @@ Under "reduce motion" the sphere freezes; captions still appear.
 
 ## The list
 
-In two columns. Title "Grocery list" with the count of Needed items ("4 items") on the right. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
+In two columns. Title "Grocery list" with the count of Needed items ("4 items") beside it, and a Reset button on the right (v0.17, FR-0.35): the first tap turns it into "Tap again to reset" for three seconds, the second starts the List over (every Frequent item Needed at its usual quantity, every Occasional one Not needed) and shows as a run in History. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
 
 Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s.
 
@@ -73,6 +73,7 @@ On the Tab5, tapping a row opens the item sheet instead (FR-0.33; the browser ge
 
 - **This order:** the quantity with round – and + on the same line, and a Needed | Not needed switch under it.
 - **On the list:** a Frequent | Occasional switch, with one line saying what it means: Frequent "stays on the list, dimmed, when it's not needed", Occasional "leaves the list when it's not needed".
+- **Product** (v0.17, FR-0.34): the Product the Cart gets for this item, on one line ("No product yet", muted, when there's none), with a Forget pill beside it. Forget clears it; the next Cart finds one again. Choosing a Product is by voice for now ("use Diamond walnuts for walnuts").
 
 Then Remove (Not needed, the item stays known) in red on a charcoal pill, and Done as the white pill with its check in a black circle. Rename swaps the groups for the name in a large field (same tray, its edge blue while typing), a line saying Kiki will use the new name by voice too, and the keyboard with Save as its white key; its hide key or × goes back to the sheet with the old name. The sheet rises to fit.
 
@@ -82,7 +83,7 @@ Every change is on the screen at once and goes to Kiki after; one Kiki refuses g
 
 ## Run cards
 
-Time and source (voice or text), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. An error shows in red under them. In the History sheet each card also has Details: per-stage latency, model, raw tool calls. The sheet holds the last 50 runs, newest first: the log's runs on load, live runs added on top.
+Time and source (voice, text, or button for Reset), total latency; Heard, Did (chips such as "added bread, milk ×2", "already there: bread", "removed eggs", "milk → 3"), Said. Ordering (v0.17) adds chips for everything it guessed or couldn't do: "cart: 11 of 12 added", "top match: walnuts → Wegmans Chopped Walnuts", "failed: blueberries (sold_out)", "eggs → Wegmans Grade AA Large Eggs, 18 Count", "no product: walnut", and in red "Instacart: signed_out". On the Tab5, analyzing and filling the Cart are one chip each. An error shows in red under them. In the History sheet each card also has Details: per-stage latency, model, raw tool calls. The sheet holds the last 50 runs, newest first: the log's runs on load, live runs added on top.
 
 ## Other behavior
 
@@ -100,10 +101,12 @@ Time and source (voice or text), total latency; Heard, Did (chips such as "added
 - v0.10: the Speaking Orb, one centered column with a docked text box, and the History sheet. (A first v0.10 draft put the stage and the list side by side; it read as left, right, then down, so everything moved onto one axis.)
 - v0.12: Needed and Not needed items; clicking a row flips it.
 - v0.16: on the Tab5, tapping a row opens the item sheet (Needed, quantity, Frequent or Occasional, rename, remove).
+- v0.17: the Product line with Forget on the Tab5's item sheet, a two-tap Reset on the List, ordering chips, "Filling cart, 4 of 12" in the state line.
 
 ## Still open
 
-- **Item sheet in the browser:** the Tab5 has it (v0.16); the browser still flips a row on click.
+- **Item sheet in the browser:** the Tab5 has it (v0.16); the browser still flips a row on click, and shows an item's Product only in the row's tooltip.
+- **Choosing a Product by touch:** a list of Products to pick from on the item sheet, in place of Forget (by voice only for now).
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
 - **Not needed Occasional items:** they vanish from the list; the run card shows them. A brief strike-through could show it in the list too.

@@ -41,12 +41,28 @@ _Avoid_: default amount, count
 ### Ordering
 
 **Store**:
-Where an Order is placed. Today that is Wegmans.
+Where an Order is placed. Today that is Wegmans, through Instacart.
 _Avoid_: vendor, source, shop
+
+**Product**:
+The exact thing the Store sells, with the Store's own id, such as "Wegmans Grade AA Large Eggs, 18 Count". An Item has at most one Product, the one the Cart gets for it; "eggs" is the Item, the 18-count carton is its Product.
+_Avoid_: SKU, variant, link, item (for this)
+
+**Cart**:
+The Store's basket that Kiki fills from the Needed Items. The household checks it out; Kiki never does.
+_Avoid_: basket, order (for this), list
 
 **Order**:
 One grocery purchase placed at a Store, and the record of which Items it got. It is complete once it is known which Items came; that, not the calendar, starts the List over.
 _Avoid_: purchase, delivery, cart
+
+**Order line**:
+One Product in an Order: the Product that was placed (never what came instead), how many, and whether it was found, substituted or missing.
+_Avoid_: order item, row
+
+**Reset**:
+Starting the List over by hand: every Frequent Item Needed at its Usual quantity, every Occasional Item Not needed. Until Orders complete themselves, the household does this when the groceries have come.
+_Avoid_: clear (that makes everything Not needed), new order
 
 **Missing**:
 An Item that was Needed but did not come in the Order. It stays Needed for the next Order.

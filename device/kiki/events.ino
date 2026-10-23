@@ -51,7 +51,8 @@ void networkTask(void *) {
     }
     Post post;
     if (xQueueReceive(posts, &post, pdMS_TO_TICKS(10))) {
-      int status = postJson(post.kind == PostKind::Command ? "/command" : "/item", *post.json);
+      const char *path = post.kind == PostKind::Command ? "/command" : post.kind == PostKind::Reset ? "/reset" : "/item";
+      int status = postJson(path, *post.json);
       PostResult result{post.kind, status, post.subject, post.detail};
       xQueueSend(postResults, &result, portMAX_DELAY);
       delete post.json;
@@ -138,6 +139,8 @@ void handleEvent(const char *json) {
     setKikiState(event["state"] | "idle");
   } else if (type == "state") {
     setKikiState(event["value"] | "idle");
+  } else if (type == "progress") {
+    showProgress(event["text"] | "");  // "Filling cart, 4 of 12" while the orb thinks
   } else if (type == "list") {
     if (editsSyncing()) {
       heldList = json;
@@ -172,7 +175,7 @@ void readItems(JsonArrayConst list, bool markChanges) {
   items.clear();
   for (JsonObjectConst entry : list) {
     Item item{entry["name"].as<String>(), entry["quantity"] | 1, entry["status"] == "needed", false,
-              entry["buying_pattern"] == "frequent"};
+              entry["buying_pattern"] == "frequent", entry["product_name"] | ""};
     if (markChanges) {
       item.changed = true;
       for (const Item &before : previous)
@@ -198,6 +201,7 @@ String joinNames(JsonArrayConst list) {
 String joinParts(const String &a, const String &b) { return a.length() && b.length() ? a + " · " + b : a + b; }
 
 // ui.html's chip(), word for word except "→", which Inter's Latin subset doesn't have: "now".
+// Analyzing and filling the Cart are one chip each here; the web UI splits them up.
 Chip chipFor(JsonObjectConst call) {
   String name = call["name"] | "";
   JsonObjectConst args = call["args"], result = call["result"];
@@ -225,9 +229,37 @@ Chip chipFor(JsonObjectConst call) {
   if (name == "set_buying_pattern")
     return {notFound ? notOnList : args["name"].as<String>() + " now " + args["buying_pattern"].as<String>(), false};
   if (name == "rename_item") return {notFound ? notOnList : args["name"].as<String>() + " now " + args["new_name"].as<String>(), false};
-  if (name == "clear_list") {
+  if (name == "clear_list" || name == "clear_all_items") {  // clear_list: the name before v0.17
     int removed = result["removed"].size();
     return {"cleared " + String(removed) + (removed == 1 ? " item" : " items"), false};
+  }
+  if (name == "reset_list") return {"reset: " + String(result["needed"].size()) + " needed", false};
+  if (!result["failed"].isNull()) return {"Instacart: " + result["failed"].as<String>(), true};
+  if (name == "set_product_for_item") {
+    if (notFound) return {notOnList, false};
+    if (!result["no_results"].isNull()) return {"no results: " + result["no_results"].as<String>(), true};
+    return {args["name"].as<String>() + " now " + result["product_name"].as<String>(), false};
+  }
+  if (name == "forget_product_for_item") return {notFound ? notOnList : args["name"].as<String>() + ": product forgotten", false};
+  if (name == "learn_product_preferences") {
+    int orders = result["new_orders"] | 0, matched = result["matched"].size();
+    String text = "read " + String(orders) + (orders == 1 ? " new order" : " new orders") + " · matched " + String(matched);
+    if (result["no_product"].size()) text += " · no product: " + joinNames(result["no_product"]);
+    return {text, result["unreadable_orders"].size() > 0};
+  }
+  if (name == "fill_cart") {
+    int added = 0, total = result["lines"].size();
+    String guesses, failures;
+    for (JsonObjectConst line : result["lines"].as<JsonArrayConst>()) {
+      String status = line["status"] | "";
+      if (status != "failed") added++;
+      if (status == "top_match") guesses += (guesses.length() ? ", " : "") + line["item"].as<String>();
+      if (status == "failed") failures += (failures.length() ? ", " : "") + line["item"].as<String>();
+    }
+    String text = "cart: " + String(added) + " of " + String(total) + " added";
+    if (guesses.length()) text += " · top match: " + guesses;
+    if (failures.length()) text += " · failed: " + failures;
+    return {text, failures.length() > 0 || !result["matching_failed"].isNull()};
   }
   return {name, false};
 }
@@ -317,6 +349,21 @@ void sendRename(const String &name, const String &newName) {
   body["name"] = name;
   body["new_name"] = newName;
   sendPost(PostKind::Rename, body, name, newName);
+}
+
+// The sheet's Forget (FR-0.34): the Item has no Product; the next Cart finds one for it.
+void sendForget(const String &name) {
+  JsonDocument body;
+  body["name"] = name;
+  body["forget_product"] = true;
+  sendPost(PostKind::Forget, body, name);
+}
+
+// The List's Reset, after its second tap (FR-0.35).
+void sendReset() {
+  JsonDocument body;
+  body.to<JsonObject>();
+  sendPost(PostKind::Reset, body, "the list");
 }
 
 // The text box is already cleared; the answer arrives as a turn event.
