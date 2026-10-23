@@ -72,6 +72,7 @@ def test_fr_0_13_live_events_for_a_typed_command(server):
             "buying_pattern": "occasional",
             "status": "needed",
             "product_name": None,
+            "on_list": True,
         }
     ]
     assert snapshot["turns"] == []
@@ -118,7 +119,8 @@ def test_fr_0_27_a_click_flips_an_item_and_the_page_gets_the_new_list(server):
     response = post_item(server, {"name": "bread", "needed": False})
     assert response.status == 200
     assert json.loads(response.read()) == {"removed": ["bread"], "not_found": []}
-    assert next(events) == {"type": "list", "items": []}  # Occasional: off the List
+    off = next(events)["items"]  # Occasional: off the List, still known (FR-0.41)
+    assert [(i["name"], i["on_list"]) for i in off] == [("bread", False)]
 
     assert post_item(server, {"name": "bread", "needed": True}).status == 200
     assert [(i["name"], i["status"]) for i in next(events)["items"]] == [
@@ -346,3 +348,16 @@ def test_nfr_0_9_a_failed_job_raises_its_reason(server, monkeypatch):
     with pytest.raises(instacart.InstacartError) as e:
         instacart.run_job("read_orders", known=[])
     assert e.value.code == "signed_out"
+
+
+def test_fr_0_41_the_screens_also_get_the_items_not_on_the_list(server, tmp_path):
+    conn = connect(str(tmp_path / "ui.db"))
+    tools.add_items(conn, [{"name": "walnuts"}])
+    tools.remove_items(
+        conn, ["walnuts"]
+    )  # Occasional and Not needed: off the List, still known
+    snapshot = next(read_events(request(server, "GET", "/events")))
+    assert [(i["name"], i["on_list"]) for i in snapshot["items"]] == [
+        ("bread", True),
+        ("walnuts", False),
+    ]

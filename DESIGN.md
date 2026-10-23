@@ -569,6 +569,8 @@ The defining decorative surface of Framer's marketing — oversized atmospheric 
 | Send button | `{components.button-primary}` |
 | Hint under the text box | `{typography.micro}` in `{colors.ink-muted}` |
 | List | `{components.product-mockup-tile}`, `{rounded.xl}`; title `{typography.headline}`, count `{typography.caption}` muted; rows in two columns (one under 520px), `{typography.body}` split by `{colors.hairline-soft}`, quantity `{typography.body-sm}` muted with tabular figures |
+| Frequent or Occasional (F, O) | One letter, `{colors.ink-muted}` at `{typography.micro}` weight 600, centred in a `{rounded.full}` circle of `{colors.surface-2}` (20 px in the browser, 30 px on the Tab5); a signal, never a label |
+| "Not on the list · 19" | A full-width row in `{colors.ink-muted}` at `{typography.caption}`, no surface, under the List's rows; the items it opens are rows like the List's at 45% |
 | History sheet | `{colors.surface-1}` panel from the right edge, `{rounded.xl}` on its left corners; backdrop `{colors.canvas}` at 70% with a 6px blur |
 | Close button | `{components.button-icon-circular}` on `{colors.surface-2}` |
 | Run cards in the sheet | `{components.template-card}` on `{colors.surface-2}`, chips on `{colors.surface-1}` |

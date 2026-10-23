@@ -158,6 +158,20 @@
   .product { color: var(--ink-muted); font-size: 12px; letter-spacing: -0.12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .name::first-letter { text-transform: uppercase; }
   .qty { color: var(--ink-muted); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .end { display: flex; align-items: center; gap: 10px; flex: none; }
+  /* F or O: Frequent or Occasional, one quiet letter (FR-0.41) */
+  .pattern {
+    display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: var(--rounded-full);
+    background: var(--surface-2); color: var(--ink-muted); font-size: 11px; font-weight: 600;
+  }
+  ul.items li.more { grid-column: 1 / -1; padding: 0; box-shadow: none; }
+  .more button {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 10px 6px; border: 0; background: none;
+    color: var(--ink-muted); font: inherit; font-size: 13px; text-align: left; cursor: pointer; border-radius: var(--rounded-md);
+  }
+  .more button:hover { color: var(--ink); }
+  .more svg { transition: transform .2s var(--ease-out); }
+  .more button[aria-expanded="true"] svg { transform: rotate(180deg); }
   ul.items li.empty {
     grid-column: 1 / -1; flex-direction: column; gap: 6px; padding: 40px 0; margin: 0;
     text-align: center; box-shadow: none;
@@ -340,7 +354,19 @@
     if (words.length) orb.say(text, { words: orb.estimate(words, 0) });
   }
 
-  function showList(items, highlight) {
+  // Every item Kiki knows (FR-0.41): the List, then a closed "Not on the list" part with the rest.
+  let othersOpen = false;
+  let lastItems = [];
+
+  function patternMark(item) {
+    const frequent = item.buying_pattern === "frequent";
+    return el("span", { class: "pattern", title: frequent ? "Frequent" : "Occasional", "aria-label": frequent ? "Frequent" : "Occasional" }, frequent ? "F" : "O");
+  }
+
+  function showList(all, highlight) {
+    lastItems = all;
+    const items = all.filter((item) => item.on_list !== false);
+    const others = all.filter((item) => item.on_list === false);
     const list = $("items");
     list.replaceChildren();
     const needed = items.filter((item) => item.status === "needed").length;
@@ -349,7 +375,9 @@
       list.append(el("li", { class: "empty" }, "Nothing on the list yet.", el("small", {}, "Say “hey jarvis, add milk”.")));
     }
     const next = new Map();
-    items.forEach((item, i) => {
+    const shown = othersOpen ? [...items, ...others] : items;
+    shown.forEach((item, i) => {
+      if (i === items.length) list.append(moreRow(others.length));
       const key = item.name.toLowerCase();
       const off = item.status !== "needed";
       next.set(key, `${item.quantity} ${item.status}`);
@@ -357,7 +385,9 @@
       const button = el("button", { type: "button", class: "flip", title: (off ? "Mark needed" : "Mark not needed") + product },
         el("span", { class: "what" }, el("span", { class: "name" }, item.name),
           ...(item.product_name ? [el("span", { class: "product" }, item.product_name)] : [])),
-        el("span", { class: "qty" }, off ? "Not needed" : item.quantity > 1 ? `× ${item.quantity}` : ""));
+        el("span", { class: "end" },
+          el("span", { class: "qty" }, item.on_list === false ? "" : off ? "Not needed" : item.quantity > 1 ? `× ${item.quantity}` : ""),
+          patternMark(item)));
       button.addEventListener("click", () => setNeeded(item.name, off));
       const row = el("li", { style: `--i: ${i}`, class: off ? "off" : "" }, button);
       if (highlight && shownItems.get(key) !== next.get(key)) {
@@ -366,8 +396,18 @@
       }
       list.append(row);
     });
+    if (!othersOpen && others.length) list.append(moreRow(others.length));
     if (highlight) list.classList.remove("enter"); // only the first paint cascades in
     shownItems = next;
+  }
+
+  function moreRow(count) {
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const [k, v] of Object.entries({ width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" })) chevron.setAttribute(k, v);
+    chevron.innerHTML = '<path d="M2.5 4.5l3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+    const button = el("button", { type: "button", "aria-expanded": String(othersOpen) }, `Not on the list · ${count}`, chevron);
+    button.addEventListener("click", () => { othersOpen = !othersOpen; showList(lastItems, false); });
+    return el("li", { class: "more" }, button);
   }
 
   function names(list) { return list.map((i) => (typeof i === "string" ? i : i.name)).join(", "); }

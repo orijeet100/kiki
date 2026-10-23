@@ -175,7 +175,7 @@ void readItems(JsonArrayConst list, bool markChanges) {
   items.clear();
   for (JsonObjectConst entry : list) {
     Item item{entry["name"].as<String>(), entry["quantity"] | 1, entry["status"] == "needed", false,
-              entry["buying_pattern"] == "frequent", entry["product_name"] | ""};
+              entry["buying_pattern"] == "frequent", entry["product_name"] | "", entry["on_list"] | true};
     if (markChanges) {
       item.changed = true;
       for (const Item &before : previous)

@@ -18,13 +18,16 @@ const lv_color_t CANVAS = lv_color_hex(0x080808), SURFACE_1 = lv_color_hex(0x181
 
 static constexpr int COLUMN_W = 660;
 static constexpr int ROW_W = 285, ROW_H = 72;  // two columns in the list card's 600 px
-static constexpr int LIST_MAX_H = 6 * ROW_H, LIST_MAX_H_TYPING = 3 * ROW_H;  // then it scrolls
+static constexpr int LIST_MAX_H = 4 * ROW_H + ROW_H / 2, LIST_MAX_H_TYPING = 3 * ROW_H;  // then it scrolls; the half row says so, and the text box and volume bar stay on screen
 static constexpr int SHEET_W = 620;
 static const char *const SUGGESTIONS[] = {"add bread and two milks", "make it three milks", "what's on the list"};
 
 lv_obj_t *connectionDot, *connectionLabel, *historyCountLabel;
 lv_obj_t *orbArea, *captionLabel, *stateLabel, *lastRunRow;
 lv_obj_t *listCountLabel, *listRows, *resetButton;
+lv_obj_t *moreRow = nullptr;  // "Not on the list · 19", between the List and the other items
+bool othersOpen = false;
+size_t listedRows = 0;  // how many rows were on the List when the rows were built
 lv_timer_t *resetArmed = nullptr;
 lv_obj_t *composer, *commandInput, *formErrorLabel, *keyboard;
 lv_obj_t *volumePercentLabel;
@@ -356,7 +359,33 @@ void tapListRow(int index) {
 }
 
 String quantityText(const Item &item) {
+  if (!item.onList) return "";  // the part's heading already says it
   return !item.needed ? "Not needed" : item.quantity > 1 ? "× " + String(item.quantity) : "";
+}
+
+size_t countOnList() {
+  size_t listed = 0;
+  for (const Item &item : items) listed += item.onList;
+  return listed;
+}
+
+// "Not on the list": closed, a row saying how many; open, the other items under it, dimmed.
+void showMoreRow() {
+  if (!moreRow) return;
+  size_t others = items.size() - countOnList();
+  lv_label_set_text(lv_obj_get_child(moreRow, 0), ("Not on the list · " + String(others)).c_str());
+  lv_label_set_text(lv_obj_get_child(moreRow, 1), othersOpen ? "Hide" : "Show");
+  for (size_t i = 0; i < listRowObjects.size(); i++) {
+    if (items[i].onList || othersOpen) lv_obj_remove_flag(listRowObjects[i], LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(listRowObjects[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void toggleOthers(lv_event_t *) {
+  othersOpen = !othersOpen;
+  measureFromTap(othersOpen ? "show others" : "hide others");
+  showMoreRow();
+  if (othersOpen) lv_obj_scroll_to_view(moreRow, LV_ANIM_ON);
 }
 
 void showListCount() {
@@ -385,6 +414,7 @@ bool showRow(lv_obj_t *row, const Item &item) {
   if (name.length()) name.setCharAt(0, toupper(name[0]));
   lv_label_set_text(lv_obj_get_child(row, 0), name.c_str());
   lv_label_set_text(lv_obj_get_child(row, 1), quantityText(item).c_str());
+  lv_label_set_text(lv_obj_get_child(lv_obj_get_child(row, 2), 0), item.frequent ? "F" : "O");
   lv_obj_set_style_opa(row, item.needed ? LV_OPA_COVER : 115, 0);
   styleRowAtRest(row);
   if (!item.changed) return false;
@@ -414,18 +444,22 @@ void startRingTimer() {
 void showList() {
   refreshItemSheet();
   showListCount();
-  if (items.size() == listRowObjects.size() && !items.empty()) {
+  size_t listed = countOnList();
+  if (items.size() == listRowObjects.size() && listed == listedRows && !items.empty()) {
     bool anyChanged = false;
     for (size_t i = 0; i < items.size(); i++) anyChanged |= showRow(listRowObjects[i], items[i]);
     if (anyChanged) startRingTimer();
+    showMoreRow();
     return;
   }
   uint32_t start = millis();
   int32_t scrolledTo = lv_obj_get_scroll_y(listRows);
   lv_obj_clean(listRows);
   listRowObjects.clear();
+  moreRow = nullptr;
+  listedRows = listed;
 
-  if (items.empty()) {
+  if (!listed) {
     lv_obj_t *empty = makeBox(listRows);
     lv_obj_set_width(empty, LV_PCT(100));
     lv_obj_set_style_pad_ver(empty, 36, 0);
@@ -436,6 +470,18 @@ void showList() {
 
   bool anyChanged = false;
   for (size_t i = 0; i < items.size(); i++) {
+    if (i == listed) {  // the List ends here; the other items follow, behind "Not on the list"
+      moreRow = makeBox(listRows);
+      lv_obj_set_size(moreRow, LV_PCT(100), ROW_H);
+      lv_obj_add_flag(moreRow, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_radius(moreRow, 15, 0);
+      lv_obj_set_style_pad_hor(moreRow, 14, 0);
+      stackChildren(moreRow, LV_FLEX_FLOW_ROW, 12, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER);
+      fill(moreRow, SURFACE_2, LV_STATE_PRESSED);
+      makeText(moreRow, &inter_20, INK_MUTED, "");
+      makeText(moreRow, &inter_20, INK, "");
+      onClick(moreRow, toggleOthers);
+    }
     lv_obj_t *row = makeBox(listRows);
     lv_obj_set_size(row, ROW_W, ROW_H);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -447,11 +493,17 @@ void showList() {
     lv_label_set_long_mode(nameLabel, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(nameLabel, 1);
     makeText(row, &inter_20, INK_MUTED, "");
+    lv_obj_t *pattern = makeBox(row);  // F or O: Frequent or Occasional, one quiet letter (FR-0.41)
+    lv_obj_set_size(pattern, 30, 30);
+    lv_obj_set_style_radius(pattern, LV_RADIUS_CIRCLE, 0);
+    fill(pattern, SURFACE_2);
+    lv_obj_center(makeText(pattern, &inter_20, INK_MUTED, ""));
     anyChanged |= showRow(row, items[i]);
     onClick(row, onRowTapped, (void *)(intptr_t)i);
     listRowObjects.push_back(row);
   }
   if (anyChanged) startRingTimer();
+  showMoreRow();
   lv_obj_update_layout(listRows);
   lv_obj_scroll_to_y(listRows, scrolledTo, LV_ANIM_OFF);
   Serial.printf("[measure] rebuilt the List (%d rows) in %lu ms\n", (int)items.size(), millis() - start);

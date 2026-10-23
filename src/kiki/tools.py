@@ -147,6 +147,21 @@ def read_list(conn: sqlite3.Connection) -> dict:
     return {"items": [dict(r) for r in rows]}
 
 
+def read_all_items(conn: sqlite3.Connection) -> dict:
+    """Every Item Kiki knows, for the screens (FR-0.41): the List first, then the rest by name.
+    `on_list` says which part each is in."""
+    others = conn.execute(
+        "SELECT items.name, quantity, buying_pattern, status, products.name AS product_name"
+        " FROM items LEFT JOIN products ON products.id = items.product_id"
+        " WHERE buying_pattern = 'occasional' AND status = 'not_needed'"
+        " ORDER BY lower(items.name)"
+    ).fetchall()
+    return {
+        "items": [{**i, "on_list": True} for i in read_list(conn)["items"]]
+        + [{**dict(r), "on_list": False} for r in others]
+    }
+
+
 def clear_all_items(conn: sqlite3.Connection) -> dict:
     """Every Item Not needed; returns the ones that were Needed (FR-0.26)."""
     removed = [

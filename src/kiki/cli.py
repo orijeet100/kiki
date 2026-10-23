@@ -22,7 +22,7 @@ def main() -> None:
         if command.lower() in {"quit", "exit"}:
             break
         turn = run_turn(command, conn)
-        record_turn(turn, tools.read_list(conn)["items"])
+        record_turn(turn, tools.read_all_items(conn)["items"])
         for call in turn["tool_calls"]:
             print(
                 f"  {call['name']}({json.dumps(call['args'])}) -> {json.dumps(call['result'])}"

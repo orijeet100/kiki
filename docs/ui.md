@@ -67,6 +67,10 @@ Under "reduce motion" the sphere freezes; captions still appear.
 
 In two columns. Title "Grocery list" with the count of Needed items ("4 items") beside it, and a Reset button on the right (v0.17, FR-0.35): the first tap turns it into "Tap again to reset" for three seconds, the second starts the List over (every Frequent item Needed at its usual quantity, every Occasional one Not needed) and shows as a run in History. Needed items come first; each row is the item name, capitalized, and its quantity on the right only when it's more than one ("× 2"). In the browser, an item with a Product shows its name under the item's, small, muted and on one line ("Wegmans Grade AA Large Eggs, 18 Count"); the Tab5 keeps rows to the name and shows the Product in the item sheet. Then the Frequent items that are Not needed this time, dimmed, with "Not needed" where the quantity goes. Occasional items that aren't needed aren't shown (v0.12, [CONTEXT.md](../CONTEXT.md)).
 
+Every row ends with one quiet letter in a small dark circle: **F** for Frequent, **O** for Occasional (v0.18, FR-0.41), after the quantity.
+
+Under the List, a closed row says **Not on the list · 19** (with a chevron in the browser, "Show" or "Hide" on the Tab5). Opened, it lists every other item Kiki knows, the Occasional ones that aren't needed this time, dimmed and in name order, each with its letter and, in the browser, its Product. Clicking one in the browser puts it on the List (Needed); tapping one on the Tab5 opens its item sheet. It starts closed every time the page loads. On the Tab5 the List card stops at four and a half rows and scrolls inside, so the text box and the volume bar always stay on screen.
+
 Clicking a row flips it between Needed and Not needed, through the same tools as saying "add" or "remove" (FR-0.27). A Needed Occasional item disappears when clicked; say "add" to bring it back. Rows that are new or changed get a blue ring for 1.5 s.
 
 On the Tab5, tapping a row opens the item sheet instead (FR-0.33; the browser gets it next). It rises from the bottom with a grab handle; the item's name, large, under a spaced-out eyebrow saying FREQUENT or OCCASIONAL, with Rename and × beside it; then two groups, each a raised plate in a dark tray with a hairline edge:
@@ -101,6 +105,7 @@ Time and source (voice, text, or button for Reset), total latency; Heard, Did (c
 - v0.10: the Speaking Orb, one centered column with a docked text box, and the History sheet. (A first v0.10 draft put the stage and the list side by side; it read as left, right, then down, so everything moved onto one axis.)
 - v0.12: Needed and Not needed items; clicking a row flips it.
 - v0.16: on the Tab5, tapping a row opens the item sheet (Needed, quantity, Frequent or Occasional, rename, remove).
+- v0.18: F or O on every row; "Not on the list" under the List with every other item.
 - v0.17: the Product line with Forget on the Tab5's item sheet, a two-tap Reset on the List, ordering chips, "Filling cart, 4 of 12" in the state line.
 
 ## Still open
@@ -109,7 +114,6 @@ Time and source (voice, text, or button for Reset), total latency; Heard, Did (c
 - **Choosing a Product by touch:** a list of Products to pick from on the item sheet, in place of Forget (by voice only for now).
 - **Real voice envelope:** the orb's swell while speaking is estimated from syllables. Following Piper's real audio needs volume events from the voice loop.
 - **Searching state:** the orb has a fifth shape (searching, blue bands), unused until Kiki has a tool that searches.
-- **Not needed Occasional items:** they vanish from the list; the run card shows them. A brief strike-through could show it in the list too.
 - **The M5 screen:** the Tab5 (720×1280) shows this page as it is, streamed from the laptop (v0.14, [ADR 0028](adr/0028-stream-the-real-ui-page-to-the-tab5.md)), with an on-screen keyboard and its own volume bar along the bottom. A layout drawn natively on the Tab5 is being tried.
 
 ## Sketches

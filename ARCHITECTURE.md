@@ -237,7 +237,7 @@ The Tab5 joins the Wi-Fi at power-on and keeps retrying each link every 3 s, so 
 | `screen.ino`'s keyboard | `makeKeyboard`: our own layout on an LVGL button matrix (LVGL's keyboard widget types its key labels, and ours say "space" and "Send"); three layers, one-shot shift, a key handler that sends `LV_EVENT_READY` (action key) or `LV_EVENT_CANCEL` (hide key) to its text box; the white action key and the quiet keys' small labels are drawn in a draw-task event. `key <name>` over serial presses a key through the same handler |
 | `serial.ps1` | sends test commands over USB serial and prints the log: `serial.ps1 "tapitem 0" "wait 2" "tapsheet plus" ...` |
 | `shot.ps1` | saves what the Tab5 shows as a PNG through the `shot` command: `shot.ps1 -Out sheet.png "tapitem 0" "wait 1.5"` |
-| `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List with its two-tap Reset, text box and keyboard, History sheet, volume bar |
+| `screen.ino` | the UI from docs/ui.md in DESIGN.md's tokens at 1.5× the web's sizes: top bar, state, caption, last run, List with its two-tap Reset, F or O on each row and "Not on the list" (v0.18; the card stops at four and a half rows), text box and keyboard, History sheet, volume bar |
 | `orb.ino` | the Speaking Orb's particle field and shapes, ported; the speaking pulse from the reply's words |
 | `audio.ino` | mic and speaker, as in `device/stream` |
 
@@ -366,6 +366,7 @@ All tools are plain functions taking and returning JSON-compatible values ([ADR 
 | `forget_product_for_item` | `name` | `{name}` or `{not_found: name}` | The Item has no Product again (FR-0.34, FR-0.38) |
 | `save_order` | `{id, delivered_at, lines: [{product_id, product_name, quantity, status}]}` | `{order_id, lines}` | One delivered Order; a line's Product is what was placed (FR-0.36) |
 | `known_order_ids`, `items_without_product`, `placed_products`, `cart_lines` | | lists | What the ordering flows read |
+| `read_all_items` | none | `{items: [{..., on_list}]}` | Every Item, the List first then the rest by name, for the screens' events (FR-0.41). The model's snapshot still uses `read_list` |
 | `preferred_product` | `product_ids` | `{id, name, orders, last_ordered}` or null | Of these Products, the one in the most Orders; a tie goes to the most recent (FR-0.37) |
 
 ## Events
@@ -411,7 +412,7 @@ Kiki defines its own event shapes ([ADR 0010](docs/adr/0010-own-event-schema.md)
 | `speaking` | `Brain` | first reply audio plays (`BotStartedSpeakingFrame`) |
 | `error` | `Brain`, `ui.send_command` | the turn had an `error` (shown until the next state) |
 
-**`list`**, live only: the whole List after every turn and every list click, `{"type": "list", "items": [{"name", "quantity", "buying_pattern", "status", "product_name"}]}`.
+**`list`**, live only: every Item Kiki knows after every turn and every list click, the List first, `{"type": "list", "items": [{"name", "quantity", "buying_pattern", "status", "product_name", "on_list"}]}`. `on_list` false is an Occasional Item that isn't Needed: the screens show it under "Not on the list" (v0.18, FR-0.41). The `snapshot`'s `items` are the same.
 
 **`progress`**, live only, while the Cart fills: `{"type": "progress", "text": "Filling cart, 4 of 12"}`. Both screens show it in the state line until the next `state`.
 

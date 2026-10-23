@@ -38,6 +38,7 @@ struct Item {
   bool changed;   // new or different since the last list: gets the blue ring for 1.5 s
   bool frequent;  // Frequent stays on the List when Not needed; Occasional leaves it
   String product;  // the Product the Cart gets for it (v0.17), empty when it has none yet
+  bool onList;     // false: an Occasional item that isn't needed, under "Not on the list" (FR-0.41)
 };
 
 struct Chip {

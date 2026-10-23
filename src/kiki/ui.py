@@ -40,7 +40,7 @@ def send_command(text: str, conn: sqlite3.Connection, model=None) -> None:
     """A typed command, same path as voice: state, turn, log, live events."""
     events.set_state("thinking")
     turn = run_turn(text, conn, model, source="text")
-    events.record_turn(turn, tools.read_list(conn)["items"])
+    events.record_turn(turn, tools.read_all_items(conn)["items"])
     events.set_state("error" if turn["error"] else "idle")
 
 
@@ -89,7 +89,7 @@ def edit_item(name: str, change: tuple, conn: sqlite3.Connection) -> tuple[int, 
             result = tools.forget_product_for_item(conn, name)
         else:
             result = tools.rename_item(conn, name, value)
-        items = tools.read_list(conn)["items"]
+        items = tools.read_all_items(conn)["items"]
     events.publish({"type": "list", "items": items})
     if "error" in result:
         return 409, result
@@ -102,9 +102,9 @@ def reset(conn: sqlite3.Connection) -> dict:
     """The Reset button (FR-0.35): start the List over, logged as a turn so History shows
     what it did and the log keeps the List as it was."""
     with turn_lock:
-        before = tools.read_list(conn)["items"]
+        before = tools.read_all_items(conn)["items"]
         result = tools.reset_list(conn)
-        items = tools.read_list(conn)["items"]
+        items = tools.read_all_items(conn)["items"]
     now = datetime.now(UTC)
     turn = {
         "type": "turn",
@@ -214,7 +214,7 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 snapshot = {
                     "type": "snapshot",
                     "state": events.current_state()["value"],
-                    "items": tools.read_list(conn)["items"],
+                    "items": tools.read_all_items(conn)["items"],
                     "turns": events.recent_turns(),
                 }
                 self._write_event(snapshot)
