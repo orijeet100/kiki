@@ -33,6 +33,7 @@ KEEPALIVE_SECS = 15
 INSTACART_POSTS = {
     "/instacart/result": instacart.finish,
     "/instacart/progress": instacart.progress,
+    "/instacart/frame": instacart.frame,
 }
 
 
@@ -157,6 +158,13 @@ def make_handler(conn: sqlite3.Connection, model=None) -> type[BaseHTTPRequestHa
                 if job is None:
                     return self._send(204, "application/json", b"")
                 self._send(200, "application/json", json.dumps(job).encode())
+            elif (
+                self.path == "/instacart/frame"
+            ):  # the Tab5, while the Cart fills (FR-0.42)
+                frame = instacart.latest_frame()
+                if frame is None:
+                    return self._send(204, "image/jpeg", b"")
+                self._send(200, "image/jpeg", frame)
             else:
                 self.send_error(404)
 

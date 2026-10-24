@@ -44,7 +44,7 @@ From top to bottom:
 
 | Element | Shows |
 |---|---|
-| Orb | The Speaking Orb. Its shape follows the state (table below). When a run arrives, Kiki's reply appears as the orb's caption, word by word, the words flying out of the orb as particles. The browser never speaks it; Piper already did |
+| Orb | The Speaking Orb. Its shape follows the state (table below). When a run arrives, Kiki's reply appears as the orb's caption, word by word, the words flying out of the orb as particles. The browser never speaks it; Piper already did. On the Tab5, while Kiki fills the Cart, Kiki's Instacart tab takes the orb's place, live (v0.19) |
 | State label | Idle, Listening…, Thinking…, Speaking, Something went wrong (in red). The one display-size line on the page. While Kiki fills the Cart it says how far it is: "Filling cart, 4 of 12" (v0.17) |
 | Last run | One quiet line: what Kiki heard, in quotes, then what it did as chips ("added ice cubes"). Clicking it opens History. Before the first run: three example commands that fill the text box when clicked |
 | List | See below |
@@ -107,6 +107,7 @@ Time and source (voice, text, or button for Reset), total latency; Heard, Did (c
 - v0.16: on the Tab5, tapping a row opens the item sheet (Needed, quantity, Frequent or Occasional, rename, remove).
 - v0.18: F or O on every row; "Not on the list" under the List with every other item.
 - v0.17: the Product line with Forget on the Tab5's item sheet, a two-tap Reset on the List, ordering chips, "Filling cart, 4 of 12" in the state line.
+- v0.19: on the Tab5, the Cart filling live in the orb's place.
 
 ## Still open
 

@@ -48,6 +48,7 @@ void networkTask(void *) {
     if (WiFi.status() == WL_CONNECTED) {
       keepEventStreamOpen();
       readEvents();
+      fetchLiveFrame();  // only while the Cart fills (live.ino)
     }
     Post post;
     if (xQueueReceive(posts, &post, pdMS_TO_TICKS(10))) {
@@ -109,6 +110,7 @@ void handleNetworkNews() {
   if (networkLink != shownLink) {
     shownLink = eventLink = networkLink;
     showConnection(eventLink);
+    if (eventLink != Link::Live) setLiveView(false);  // no Kiki, no fill to show: the screen comes back
   }
   String *json;
   while (xQueueReceive(eventLines, &json, 0)) {
@@ -140,7 +142,8 @@ void handleEvent(const char *json) {
   } else if (type == "state") {
     setKikiState(event["value"] | "idle");
   } else if (type == "progress") {
-    showProgress(event["text"] | "");  // "Filling cart, 4 of 12" while the orb thinks
+    showProgress(event["text"] | "");  // "Filling cart, 4 of 12", with the Cart filling where the orb was
+    setLiveView(true);
   } else if (type == "list") {
     if (editsSyncing()) {
       heldList = json;
@@ -149,6 +152,7 @@ void handleEvent(const char *json) {
     readItems(event["items"], true);
     showList();
   } else if (type == "turn") {
+    setLiveView(false);  // the fill is over: its caption goes on the orb, not under a frame
     addRun(event.as<JsonObjectConst>());
     showRuns();
     addNewestRunToHistory();
@@ -166,6 +170,7 @@ void handleEvent(const char *json) {
 
 void setKikiState(const String &state) {
   kikiState = state;
+  if (state != "thinking") setLiveView(false);
   bool showDone = state == "idle" && runJustFinished;
   runJustFinished = false;
   showKikiState(state, showDone);

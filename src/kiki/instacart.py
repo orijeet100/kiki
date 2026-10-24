@@ -6,6 +6,7 @@ The extension (browser/instacart) sees that tab, fetches the job from GET /insta
 does it in that tab, posts POST /instacart/result and closes the tab. No other tab is touched.
 """
 
+import base64
 import os
 import secrets
 import subprocess
@@ -21,6 +22,7 @@ STORE = os.environ.get("KIKI_STORE", "wegmans")
 ADDRESS = os.environ.get("KIKI_ADDRESS", "30 River Court")
 # Reading 10 Orders or filling 20 Items takes about two minutes; this only catches a dead job.
 TIMEOUT_SECS = 300
+MAX_FRAME_BYTES = 256 * 1024  # the Tab5's buffer for one frame
 
 
 class InstacartError(Exception):
@@ -35,16 +37,19 @@ _jobs = threading.Lock()  # one job at a time: there is one Kiki tab
 _state = threading.Lock()
 _job: dict | None = None
 _result: dict | None = None
+_frame: bytes | None = (
+    None  # the newest JPEG of Kiki's tab while it fills the Cart (FR-0.42)
+)
 _done = threading.Event()
 
 
 def run_job(kind: str, **payload) -> dict:
     """Run one extension job and return its data; raise InstacartError if it failed."""
-    global _job, _result
+    global _job, _result, _frame
     with _jobs:
         job = {"id": secrets.token_hex(4), "kind": kind, "store": STORE, **payload}
         with _state:
-            _job, _result = job, None
+            _job, _result, _frame = job, None, None
             _done.clear()
         try:
             open_tab(
@@ -54,7 +59,7 @@ def run_job(kind: str, **payload) -> dict:
             raise InstacartError("no_chrome") from None
         answered = _done.wait(TIMEOUT_SECS)
         with _state:
-            result, _job = _result, None
+            result, _job, _frame = _result, None, None
     if not answered:
         raise InstacartError(
             "no_answer"
@@ -96,3 +101,20 @@ def progress(update: dict) -> None:
         events.publish(
             {"type": "progress", "text": f"Filling cart, {done + 1} of {total}"}
         )
+
+
+def frame(update: dict) -> None:
+    """POST /instacart/frame: the newest picture of Kiki's tab, base64 JPEG, for the Tab5."""
+    global _frame
+    jpeg = base64.b64decode(update["data"], validate=True)  # not base64: a 400
+    if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
+        return
+    with _state:
+        if _job and update.get("id") == _job["id"]:
+            _frame = jpeg
+
+
+def latest_frame() -> bytes | None:
+    """GET /instacart/frame: what the Tab5 shows while the Cart fills; None between jobs."""
+    with _state:
+        return _frame

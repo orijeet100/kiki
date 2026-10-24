@@ -1068,6 +1068,10 @@ void startScreen() {
   lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(touch, readTouch);
 
+  // The sheets live on the top layer, the item sheet parked below the screen; a layer that scrolls
+  // let a swipe on anything there (History's backdrop, the live view's blocker) pull it into view.
+  lv_obj_remove_flag(lv_layer_top(), LV_OBJ_FLAG_SCROLLABLE);
+
   lv_obj_t *screen = lv_screen_active();
   fill(screen, CANVAS);
   lv_obj_set_style_text_color(screen, INK, 0);
