@@ -5,6 +5,7 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 ## [Unreleased]
 
 ### Added
+- The Cart filling, live (v0.19, FR-0.42, ADR 0037): while Kiki fills the Instacart Cart, the Tab5 shows Kiki's Chrome tab in the orb's place, from Chrome's own screencast. The extension asks for the `debugger` permission for this (NFR-0.10), and Chrome shows its debugging bar during a fill. While it shows, the Tab5 is view only except for the volume bar: open sheets and the keyboard close, and touches go nowhere.
 - Every item in reach (v0.18, FR-0.41): under the List, a closed "Not on the list · 19" part with every other item Kiki knows, dimmed and by name. In the browser a click puts one back on the List; on the Tab5 a tap opens its item sheet. Every row ends with F (Frequent) or O (Occasional).
 - Ordering at Wegmans through Instacart (v0.17, ADR 0034, ADR 0035). "Analyze my order" reads the delivered Wegmans orders to 30 River Court and gives each Item the Product that was placed most often (never a shopper's substitute): on the owner's account, 5 orders read and 15 Items matched in 19 s. "Order the groceries" puts every Needed Item in the Instacart Cart at its quantity, by setting the count, so a second run gives the same Cart (17 Items in 54–60 s); the owner checks out. "Use Diamond walnuts for walnuts" and "forget the walnut product" change an Item's Product. Items without one get a search result, "Buy it again" first. Kiki says plainly when Instacart is signed out, wants a human check, shows another address or has changed its page.
 - The Kiki for Instacart extension (`browser/instacart`), loaded once in the owner's own Chrome: Kiki opens a tab there, the extension does the job in that tab only and closes it. No second profile, no Allow dialog, no Claude tokens for reading pages.
@@ -19,6 +20,7 @@ What actually shipped, newest first. Format: [Keep a Changelog](https://keepacha
 - `device/kiki/shot.ps1` saves what the Tab5 shows as a PNG.
 
 ### Fixed
+- A swipe on the Tab5 while History or the live view was up scrolled LVGL's top layer and pulled the hidden item sheet into view (v0.19).
 - The Tab5 rebooted again and again, usually right after "hey jarvis": its Wi-Fi driver ran out of internal RAM (`assert failed: sdio_rx_get_buffer`) once the List showed every item and History had ordering rows. Everything ordinary now lives in PSRAM; internal RAM free went from 24-31 KB to 110-150 KB, the orb still at 40 fps.
 - An old `#kiki` tab restored by Chrome at start-up made the extension log an error (`worker.js:45`); it now closes the tab quietly.
 - A slow Product page could count as sold out, and the Cart would get a different Product: Kiki now loads it once more first, unless the page says it's out of stock.

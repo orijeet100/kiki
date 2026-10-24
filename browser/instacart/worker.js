@@ -30,6 +30,7 @@ async function run(tabId, id, kiki_url) {
       await chrome.tabs.remove(tabId).catch(() => {});
       return chrome.runtime.reload();
     }
+    if (job.kind === "fill_cart") showOnTab5(tabId, id, kiki);
     result = { id, ok: true, data: await JOBS[job.kind](tabId, job, kiki) };
   } catch (e) {
     result = { id, ok: false, error: e.message };
@@ -40,6 +41,37 @@ async function run(tabId, id, kiki_url) {
     // No Kiki to tell: an old #kiki tab that Chrome restored at start-up, or Kiki stopped.
   } finally {
     chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
+// While the Cart fills, the Tab5 shows this tab (FR-0.42): Chrome's own screencast, scaled to fit
+// the orb's 720x360 there, sent to Kiki one frame at a time (frames that come meanwhile are
+// skipped). Chrome says "started debugging this browser" until the tab closes, which ends it.
+// Nothing here may stop the fill, so its failures are ignored.
+async function showOnTab5(tabId, id, kiki) {
+  const target = { tabId };
+  let sending = false;
+  const onFrame = (source, method, frame) => {
+    if (source.tabId !== tabId || method !== "Page.screencastFrame") return;
+    chrome.debugger.sendCommand(target, "Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
+    if (sending) return;
+    sending = true;
+    kiki("POST", "/instacart/frame", { id, data: frame.data })
+      .catch(() => {})
+      .finally(() => (sending = false));
+  };
+  const onDetach = (source) => {
+    if (source.tabId !== tabId) return;
+    chrome.debugger.onEvent.removeListener(onFrame);
+    chrome.debugger.onDetach.removeListener(onDetach);
+  };
+  chrome.debugger.onEvent.addListener(onFrame);
+  chrome.debugger.onDetach.addListener(onDetach);
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    await chrome.debugger.sendCommand(target, "Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: 720, maxHeight: 360 });
+  } catch (e) {
+    onDetach({ tabId }); // DevTools already open on the tab, say: the fill goes on unseen
   }
 }
 

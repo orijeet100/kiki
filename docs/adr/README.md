@@ -62,3 +62,4 @@ Why each decision was made. Format: MADR-lite (see [0001](0001-record-decisions-
 | [0034](0034-reach-instacart-through-a-kiki-extension-in-the-owners-chrome.md) | Reach Instacart through a Kiki extension in the owner's own Chrome; Kiki fills the Cart and never checks out | Accepted |
 | [0035](0035-learn-each-items-product-from-what-was-placed.md) | Learn each Item's Product from what was placed in past Orders; Claude matches, code picks | Accepted |
 | [0036](0036-tool-names-say-what-they-change.md) | Tool names say what they change; `clear_list` becomes `clear_all_items` | Accepted |
+| [0037](0037-show-the-cart-filling-on-the-tab5-with-chromes-screencast.md) | Show the Cart filling on the Tab5 with Chrome's screencast of Kiki's tab | Accepted |

@@ -469,7 +469,7 @@ void showNewestOrbFrame() {
     orbReady = -1;
   }
   xSemaphoreGive(orbMutex);
-  if (ready < 0 || !visible || orbCovered()) return;
+  if (ready < 0 || !visible || liveView || orbCovered()) return;  // liveView: the Cart filling has the slot (live.ino)
   lv_area_t area;
   orbAreaCoords(&area);
   int rows = (ORB_H - orbRowsUnderCaption()) / ORB_RENDER_SCALE;

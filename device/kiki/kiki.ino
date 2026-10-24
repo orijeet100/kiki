@@ -15,7 +15,9 @@
 #include <ArduinoJson.h>
 #include <lvgl.h>
 #include "driver/ppa.h"
+#include "driver/jpeg_decode.h"  // the Cart filling, live (live.ino)
 #include <lgfx/v1/platforms/esp32p4/Panel_DSI.hpp>  // the panel's framebuffer, for the PPA
+#include <atomic>
 #include <deque>
 #include <vector>
 #include "secrets.h"
@@ -151,6 +153,8 @@ void handleSerialTestCommands() {
   } else if (sscanf(command.c_str(), "tap %d %d", &x, &y) == 2) {
     Serial.printf("[test] tap %d %d\n", x, y);
     pressScreenFor(x, y, 250);
+  } else if (command.startsWith("live ")) {  // "live on", "live off": the Cart-filling view, without a fill
+    setLiveView(command.substring(5).startsWith("on"));
   } else if (command.startsWith("orbspeak")) {  // the speaking look on a sample reply, without a sound
     orbSays("Milk, onions, bananas, walnuts, chia seeds, paneer, apples, blueberry, bread and eggs.");
   } else if (command.startsWith("redraw")) {
@@ -187,6 +191,7 @@ void setup() {
   Serial.printf("[volume] starts at %d of 255\n", volume);
 
   startScreen();
+  startLiveView();
   startAudio();
   startNetwork();
 
@@ -227,6 +232,8 @@ void loop() {
   endStep("events");
   showNewestOrbFrame();
   endStep("orb");
+  showLiveFrame();
+  endStep("live");
   lv_timer_handler();
   endStep("lvgl");
   reportStalls();

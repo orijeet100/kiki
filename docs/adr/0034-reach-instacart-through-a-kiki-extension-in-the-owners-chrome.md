@@ -1,6 +1,6 @@
 # 0034. Reach Instacart through a Kiki extension in the owner's own Chrome; Kiki fills the Cart and never checks out
 
-- Status: Accepted
+- Status: Accepted (its permissions widened by 0037)
 - Date: 2026-10-23
 - Related: FR-0.36 to FR-0.40, NFR-0.9 (v0.17). Keeps 0007 (the laptop is the host), 0008 (plain tools).
 

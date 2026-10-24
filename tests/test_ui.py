@@ -295,7 +295,7 @@ def test_fr_0_34_an_edit_forgets_the_product(server, tmp_path):
     assert tools.items_without_product(conn) == ["bread"]
 
 
-def test_nfr_0_9_the_extension_gets_its_job_and_answers_it(server, monkeypatch):
+def test_nfr_0_10_the_extension_gets_its_job_and_answers_it(server, monkeypatch):
     from kiki import instacart
 
     port = server.server_address[1]
@@ -329,7 +329,7 @@ def test_nfr_0_9_the_extension_gets_its_job_and_answers_it(server, monkeypatch):
     assert request(server, "GET", "/instacart/job").status == 204  # nothing waiting now
 
 
-def test_nfr_0_9_a_failed_job_raises_its_reason(server, monkeypatch):
+def test_nfr_0_10_a_failed_job_raises_its_reason(server, monkeypatch):
     from kiki import instacart
 
     def extension(url):
@@ -348,6 +348,53 @@ def test_nfr_0_9_a_failed_job_raises_its_reason(server, monkeypatch):
     with pytest.raises(instacart.InstacartError) as e:
         instacart.run_job("read_orders", known=[])
     assert e.value.code == "signed_out"
+
+
+def test_nfr_0_10_the_extension_asks_only_for_instacart_localhost_and_its_tab():
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "browser/instacart/manifest.json").read_text()
+    )
+    assert sorted(manifest["permissions"]) == ["debugger", "scripting", "tabs"]
+    assert manifest["host_permissions"] == [
+        "https://www.instacart.com/*",
+        "http://localhost/*",
+    ]
+
+
+def test_fr_0_42_the_tab5_gets_the_newest_frame_of_the_fill(server, monkeypatch):
+    import base64
+
+    from kiki import instacart
+
+    def jpeg(n):
+        return base64.b64encode(b"\xff\xd8" + bytes([n])).decode()
+
+    seen = []
+
+    def extension(url):
+        job_id = url.rsplit("#kiki-", 1)[1].split("-")[0]
+        post_json(server, "/instacart/frame", {"id": "someone-else", "data": jpeg(0)})
+        post_json(server, "/instacart/frame", {"id": job_id, "data": jpeg(1)})
+        post_json(server, "/instacart/frame", {"id": job_id, "data": jpeg(2)})
+        not_a_jpeg = base64.b64encode(b"<html>").decode()
+        post_json(server, "/instacart/frame", {"id": job_id, "data": not_a_jpeg})
+        response = request(server, "GET", "/instacart/frame")
+        seen.append(
+            (response.status, response.getheader("Content-Type"), response.read())
+        )
+        post_json(server, "/instacart/result", {"id": job_id, "ok": True, "data": {}})
+
+    monkeypatch.setattr(
+        instacart,
+        "open_tab",
+        lambda url: threading.Thread(target=extension, args=(url,)).start(),
+    )
+    assert request(server, "GET", "/instacart/frame").status == 204  # no fill yet
+    instacart.run_job("fill_cart", lines=[])
+    assert seen == [(200, "image/jpeg", b"\xff\xd8\x02")]
+    assert request(server, "GET", "/instacart/frame").status == 204  # the fill is over
+    bad = post_json(server, "/instacart/frame", {"id": "x", "data": "not base64!"})
+    assert bad.status == 400
 
 
 def test_fr_0_41_the_screens_also_get_the_items_not_on_the_list(server, tmp_path):
