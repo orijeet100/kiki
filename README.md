@@ -46,6 +46,8 @@ Say "hey jarvis" to the Tab5, wait for the chime, say a command. Drag the bar al
 
 Better, since v0.15: let the Tab5 draw the UI itself, smoother and without Chrome: flash `device/kiki` with `powershell -ExecutionPolicy Bypass -File device\kiki\build.ps1 -Port COM9`, and run Kiki with `$env:KIKI_UI_HOST="0.0.0.0"` as well; `kiki.screen` isn't needed. Details, ports and what was learned: [ARCHITECTURE.md](ARCHITECTURE.md#tab5-v014).
 
+To skip the `$env:` lines every time, put `KIKI_MIC=tab5`, `KIKI_SPEAKER=tab5` and `KIKI_UI_HOST=0.0.0.0` in `.env`; then `uv run --env-file .env python -m kiki.voice` alone starts Kiki for the Tab5.
+
 ## Order the groceries
 
 Since v0.17 Kiki fills your Instacart cart at Wegmans; you check out in the Instacart app. Once, in your own Chrome (signed in to Instacart): open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and pick `browser/instacart`. Set `KIKI_ADDRESS` in `.env` if your delivery address isn't 30 River Court. Then:
